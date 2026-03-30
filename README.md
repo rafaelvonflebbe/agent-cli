@@ -141,10 +141,13 @@ O loop encerra quando:
 
 ## Desenvolvimento
 
+Este projeto usa **tsgo** (`@typescript/native-preview`) — o compilador TypeScript nativo em Go, que é significativamente mais rápido que o `tsc` tradicional.
+
 ```bash
-npm run build      # Compilar (tsgo)
-npm run dev        # Compilar + executar
-npm run watch      # Compilar em modo watch
+npm run build      # Compilar com tsgo (recomendado)
+npm run build:old  # Compilar com tsc (fallback)
+npm run dev        # Compilar com tsgo + executar
+npm run watch      # Compilar em modo watch com tsc
 ```
 
 Requer Node >= 20.

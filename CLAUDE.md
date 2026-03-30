@@ -4,8 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Run
 
-- **Build:** `npm run build` (uses `tsgo` — the native Go-based TypeScript compiler via `@typescript/native-preview`)
-- **Run:** `npm start` or `npm run dev` (build + run)
+- **Build:** `npm run build` — uses **tsgo** (`@typescript/native-preview`), the native Go-based TypeScript compiler (fast)
+- **Build (fallback):** `npm run build:old` — standard `tsc` if tsgo has issues
+- **Run:** `npm start` or `npm run dev` (tsgo build + run)
 - **Watch:** `npm run watch` (standard `tsc --watch`)
 - **Global install:** `npm link`
 
