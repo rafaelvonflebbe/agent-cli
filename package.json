@@ -1,0 +1,39 @@
+{
+  "name": "agent-cli",
+  "version": "1.0.0",
+  "description": "TypeScript implementation of Ralph autonomous AI agent loop",
+  "main": "dist/index.js",
+  "bin": {
+    "agent-cli": "./dist/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsgo",
+    "build:old": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsgo && node dist/index.js",
+    "dev:old": "tsc && node dist/index.js",
+    "watch": "tsc --watch"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "autonomous",
+    "loop"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@typescript/native-preview": "latest",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

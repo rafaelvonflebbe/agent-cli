@@ -1,0 +1,19 @@
+{
+  "project": "Test Project",
+  "branchName": "feature/test",
+  "description": "A test project for agent-cli",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Create a test file",
+      "description": "Create a simple test file to verify the agent works",
+      "acceptanceCriteria": [
+        "Create test.txt with hello content",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
