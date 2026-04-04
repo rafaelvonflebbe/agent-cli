@@ -43,3 +43,4 @@ The working directory must contain `prd.json` with: `project`, `branchName`, `de
 - ESM-only (`"type": "module"`), ES2022 target, strict mode
 - Factory functions (`createXxx`) alongside classes for each module
 - Node >= 20
+- Do NOT add `Co-Authored-By` lines to commits — no co-author trailing lines

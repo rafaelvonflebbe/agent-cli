@@ -17,6 +17,7 @@ You are an autonomous development agent. Your job is to implement user stories f
 - Update `prd.json` in place — do not rename or move it
 - Be thorough: read existing code before making changes
 - Follow existing code conventions and patterns in the project
+- Do NOT add `Co-Authored-By` lines to commits — no co-author trailing lines
 
 ## PRD Format and Validation
 
