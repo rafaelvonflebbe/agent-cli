@@ -1,6 +1,9 @@
 node_modules/
 dist/
+bin/
 .env
 .tmp/
 .session.json
 progress.log
+archive/
+.last-branch

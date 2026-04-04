@@ -10,7 +10,7 @@ import { createSessionManager, SessionManager } from './session.js';
 import { validateConfig } from './config.js';
 import { info, success, error, warn, iterationHeader } from '../utils/logger.js';
 import { appendText } from '../utils/file-utils.js';
-import { captureGitStatus, diffGitStatus, displayFileChanges, branchExists } from '../utils/git-utils.js';
+import { captureGitStatus, diffGitStatus, displayFileChanges, branchExists, getCurrentBranch } from '../utils/git-utils.js';
 import type { FileChange } from '../utils/git-utils.js';
 import chalk from 'chalk';
 import { join } from 'path';
@@ -66,8 +66,11 @@ export class AgentIterator {
     // Check if the branch still exists
     const exists = await branchExists(this.branchName, this.config.directory);
     if (!exists) {
-      await this.handleStaleBranch(this.branchName);
-      return;
+      const newBranch = await this.handleStaleBranch(this.branchName);
+      if (!newBranch) {
+        return; // Detached HEAD — cannot continue
+      }
+      // Auto-updated to new branch, continue below
     }
 
     // Initialize archive system
@@ -303,27 +306,50 @@ export class AgentIterator {
   }
 
   /**
-   * Handle a stale branch that no longer exists
+   * Handle a stale branch that no longer exists.
+   * Detects the current git branch and auto-updates prd.json instead of stopping.
+   * Returns the new branch name, or null if in detached HEAD (caller should stop).
    */
-  private async handleStaleBranch(branchName: string): Promise<void> {
+  private async handleStaleBranch(branchName: string): Promise<string | null> {
     warn(`Branch '${branchName}' no longer exists!`);
 
-    // Archive the run
+    // Archive the run under the stale branch name
     await this.archiver.archive(branchName);
 
     // Initialize progress file so we can log to it
     await this.archiver.initProgressFile(branchName);
 
-    // Clear branchName in prd.json
-    await this.prdManager.updateBranchName('');
+    // Detect current branch
+    const currentBranch = await getCurrentBranch(this.config.directory);
 
-    // Log to progress.log
+    if (!currentBranch) {
+      // Detached HEAD — cannot continue
+      await this.prdManager.updateBranchName('');
+
+      await this.logProgress(
+        `STALE BRANCH: Branch '${branchName}' no longer exists. ` +
+        `Detected detached HEAD state. Cleared branchName in prd.json and archived the run. Stopping loop.`
+      );
+
+      error(`Cannot continue: branch '${branchName}' no longer exists and repository is in detached HEAD state. Update prd.json with a valid branchName to resume.`);
+      return null;
+    }
+
+    // Auto-update branchName in prd.json
+    warn(`Auto-updating branchName from '${branchName}' to '${currentBranch}'`);
+    await this.prdManager.updateBranchName(currentBranch);
+    this.branchName = currentBranch;
+
+    // Reset progress file for new branch
+    await this.archiver.resetProgressFile(currentBranch);
+
     await this.logProgress(
       `STALE BRANCH: Branch '${branchName}' no longer exists. ` +
-      `Cleared branchName in prd.json and archived the run. Stopping loop.`
+      `Auto-updated branchName to '${currentBranch}' and archived the previous run. Continuing.`
     );
 
-    error(`Cannot continue: branch '${branchName}' no longer exists. Update prd.json with a valid branchName to resume.`);
+    info(`Continuing on branch '${currentBranch}'`);
+    return currentBranch;
   }
 
   /**

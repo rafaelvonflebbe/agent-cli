@@ -4,15 +4,16 @@
   "description": "TypeScript implementation of autonomous AI agent loop",
   "main": "dist/index.js",
   "bin": {
-    "agent-cli": "./dist/index.js"
+    "agent-cli": "./bin/agent-cli.js"
   },
   "type": "module",
   "scripts": {
-    "build": "tsgo",
-    "build:old": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsgo && node dist/index.js",
-    "dev:old": "tsc && node dist/index.js",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "build:old": "tsgo",
+    "build:tsc": "tsc",
+    "start": "bun run src/index.ts",
+    "dev": "bun run src/index.ts",
+    "dev:old": "tsgo && node dist/index.js",
     "watch": "tsc --watch"
   },
   "keywords": [
