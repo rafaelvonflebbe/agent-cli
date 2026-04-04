@@ -14,7 +14,8 @@ const DEFAULTS = {
   maxIterations: 10,
   iterationDelay: 2000,
   completionSignal: '<promise>COMPLETE</promise>',
-} satisfies Record<string, ToolType | number | string>;
+  dryRun: false,
+} satisfies Record<string, ToolType | number | string | boolean>;
 
 /**
  * Create an agent configuration with defaults applied
@@ -26,6 +27,7 @@ export function createConfig(options: Partial<AgentConfig> = {}): AgentConfig {
     maxIterations: options.maxIterations ?? DEFAULTS.maxIterations,
     iterationDelay: options.iterationDelay ?? DEFAULTS.iterationDelay,
     completionSignal: options.completionSignal ?? DEFAULTS.completionSignal,
+    dryRun: options.dryRun ?? false,
   };
 }
 
@@ -75,7 +77,7 @@ export function getToolCommand(tool: ToolType): { command: string; args: string[
  * Get the prompt file name for a specific tool
  */
 export function getPromptFile(tool: ToolType): string {
-  return tool === 'amp' ? 'prompt.md' : 'CLAUDE.md';
+  return tool === 'amp' ? 'prompt.md' : 'agent-cli.md';
 }
 
 /**

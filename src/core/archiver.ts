@@ -81,7 +81,7 @@ export class Archiver {
   async archive(branchName: string): Promise<ArchiveInfo> {
     const date = new Date();
     const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD
-    const featureName = branchName.replace(/^ralph\//, ''); // Strip ralph/ prefix
+    const featureName = branchName.replace(/^ralph\//, ''); // Strip feature branch prefix
     const archiveDir = join(this.archiveBasePath, `${dateStr}-${featureName}`);
 
     info(`Archiving previous run to: ${archiveDir}`);
@@ -130,7 +130,7 @@ export class Archiver {
    */
   async resetProgressFile(): Promise<void> {
     const progressPath = join(this.directory, PROGRESS_FILE);
-    const header = `# Ralph Progress Log
+    const header = `# Agent CLI Progress Log
 Started: ${new Date().toISOString()}
 ---
 `;

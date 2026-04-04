@@ -12,8 +12,91 @@
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Log iteration progress to progress.txt during the agent loop",
+      "description": "The main loop in src/core/iterator.ts never writes to progress.txt during iterations. The file is created by the Archiver with a header but remains empty throughout the run. After each iteration, the loop should append a timestamped entry to progress.txt with the iteration number, which story was targeted, and the current completion status. This makes progress.txt the human-readable run log it was designed to be, and fixes the misleading message at line 108 that says 'Check progress.txt for details' when the file has no details.",
+      "acceptanceCriteria": [
+        "After each iteration in the main loop, append a timestamped entry to progress.txt with: iteration number, targeted story id/title, and completion status",
+        "When all stories complete, append a final summary entry to progress.txt",
+        "When max iterations are reached without completion, append a warning entry to progress.txt",
+        "The Archiver's initProgressFile creates the file with a header that entries can be appended to",
+        "Build passes with npm run build",
+        "Verify manually by running with --dry-run that progress.txt gets populated"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "progress.txt is currently a dead file — created but never written to during the loop. This was found by inspecting src/core/iterator.ts lines 61-108."
+    },
+    {
+      "id": "US-002",
+      "title": "Add --dry-run flag to test loop iteration without spawning tools",
+      "description": "Add a --dry-run flag to the CLI that simulates the loop by logging what would happen at each iteration (which story would be picked, which tool would run) without actually spawning the AI tool. This allows verifying that the loop correctly picks the highest-priority incomplete story, tracks progress across iterations, and detects completion when all stories have passes:true.",
+      "acceptanceCriteria": [
+        "Add --dry-run flag to the CLI in src/index.ts via commander",
+        "In dry-run mode, log which story would be picked, which tool would run, and the iteration number",
+        "Simulate completing one story per iteration (set passes:true on the next incomplete story, then reload)",
+        "Detect and log completion when all stories have passes:true",
+        "Do NOT spawn any external process in dry-run mode",
+        "Build passes with npm run build"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "This story validates the loop mechanism. If dry-run completes successfully, the loop orchestration is working correctly."
+    },
+    {
+      "id": "US-004",
+      "title": "Add --init flag to bootstrap agent-cli files in a target project directory",
+      "description": "Add a --init flag that copies the scaffold files (agent-cli.md, progress.txt header) to a target directory specified by --directory. If prd.json already exists in the target directory, skip the copy and warn the user — they may have existing work. If it doesn't exist, copy a template prd.json with placeholder values. This lets users run `agent-cli --init --directory /path/to/project` to set up a new project quickly without manually creating the files.",
+      "acceptanceCriteria": [
+        "Add --init flag to the CLI in src/index.ts via commander",
+        "When --init is used, copy agent-cli.md from the agent-cli package to the target directory",
+        "Create progress.txt with the standard header in the target directory",
+        "If prd.json already exists in the target directory, skip it and log a warning — do not overwrite",
+        "If prd.json does not exist, copy a template prd.json with placeholder project name, branchName, description, and one example userStory",
+        "Exit after init completes — do not start the agent loop",
+        "Build passes with npm run build"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "This is a setup convenience command. The template prd.json should have clear placeholder values the user can edit."
+    },
+    {
+      "id": "US-005",
+      "title": "Show targeted story in iteration header and remove all 'Ralph' branding",
+      "description": "Two changes: (1) Before each live iteration, display the next incomplete story (id, title, priority) in the iteration header so the user knows what the agent is about to work on. (2) Remove all references to 'Ralph' across the codebase — replace with 'Agent CLI' or equivalent. Found occurrences: src/core/archiver.ts line 133 ('Ralph Progress Log'), src/utils/logger.ts line 100 (iteration header), src/core/init.ts line 51 ('Ralph Progress Log'), package.json description, and progress.txt.",
+      "acceptanceCriteria": [
+        "Iteration header shows the targeted story: id, title, and priority before each live iteration starts",
+        "In dry-run mode the targeted story is also shown",
+        "Replace 'Ralph Progress Log' with 'Agent CLI Progress Log' in archiver.ts and init.ts",
+        "Replace 'Ralph Iteration' with 'Agent CLI Iteration' in logger.ts",
+        "Update package.json description to remove 'Ralph'",
+        "Build passes with npm run build"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Files with 'Ralph': src/core/archiver.ts:133, src/utils/logger.ts:100, src/core/init.ts:51, package.json:4"
+    },
+    {
+      "id": "US-006",
+      "title": "Show file changes with colors after each iteration",
+      "description": "After each live iteration completes, detect which files changed (added, modified, removed) by comparing git status before and after the tool runs. Display the changes with chalk colors: green for added/modified, red for removed. This gives the user a clear summary of what the AI tool did in each iteration.",
+      "acceptanceCriteria": [
+        "Capture git status before each live iteration starts",
+        "After the iteration, run git status again and diff the two snapshots to detect added, modified, and removed files",
+        "Display added files with green + prefix: + path/to/file.ts (added)",
+        "Display modified files with green + prefix: + path/to/file.ts (modified)",
+        "Display removed files with red - prefix: - path/to/file.ts (removed)",
+        "Show the file change summary between the iteration progress line and the next iteration header",
+        "In dry-run mode, skip file change detection (no actual changes happen)",
+        "Build passes with npm run build"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Use git status --porcelain to detect changes. Chalk is already a dependency."
     }
   ]
 }

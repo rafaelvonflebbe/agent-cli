@@ -37,6 +37,7 @@ agent-cli --directory /caminho/para/projeto --tool amp 10
 | `[max_iterations]` | Número máximo de iterações | `10` |
 | `--tool <amp\|claude>` | Ferramenta de IA a usar | `amp` |
 | `--directory <path>` | Diretório de trabalho | Diretório atual |
+| `--dry-run` | Simula o loop sem spawnar ferramentas externas | `false` |
 
 ## Usando em outro projeto
 
@@ -121,6 +122,9 @@ agent-cli --tool claude 20
 
 # Ou executar com amp
 agent-cli --tool amp 10
+
+# Simular o loop sem spawnar ferramentas (para testar)
+agent-cli --dry-run 5
 ```
 
 ## Arquivamento automático

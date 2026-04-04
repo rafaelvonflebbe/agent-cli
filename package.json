@@ -1,7 +1,7 @@
 {
   "name": "agent-cli",
   "version": "1.0.0",
-  "description": "TypeScript implementation of Ralph autonomous AI agent loop",
+  "description": "TypeScript implementation of autonomous AI agent loop",
   "main": "dist/index.js",
   "bin": {
     "agent-cli": "./dist/index.js"

@@ -94,10 +94,13 @@ export function success(message: string): void {
 /**
  * Log iteration header
  */
-export function iterationHeader(iteration: number, total: number, tool: string): void {
+export function iterationHeader(iteration: number, total: number, tool: string, story?: { id: string; title: string; priority: number }): void {
   const line = '='.repeat(64);
   console.log('\n' + chalk.cyan(line));
-  console.log(chalk.cyan(`  Ralph Iteration ${iteration} of ${total} (${tool})`));
+  console.log(chalk.cyan(`  Agent CLI Iteration ${iteration} of ${total} (${tool})`));
+  if (story) {
+    console.log(chalk.cyan(`  Target: ${story.id} "${story.title}" (priority ${story.priority})`));
+  }
   console.log(chalk.cyan(line) + '\n');
 }
 

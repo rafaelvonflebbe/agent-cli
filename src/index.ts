@@ -6,6 +6,7 @@
 import { Command } from 'commander';
 import { createConfig, type ToolType } from './core/config.js';
 import { runAgent } from './core/iterator.js';
+import { runInit } from './core/init.js';
 import { error, success } from './utils/logger.js';
 import { fileExistsSync } from './utils/file-utils.js';
 import { join } from 'path';
@@ -32,8 +33,16 @@ program
   .argument('[max_iterations]', 'Maximum number of iterations', '10')
   .option('--tool <amp|claude>', 'AI tool to use', 'amp')
   .option('--directory <path>', 'Working directory containing prd.json', process.cwd())
-  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string }) => {
+  .option('--dry-run', 'Simulate iterations without spawning tools')
+  .option('--init', 'Bootstrap agent-cli files in the target directory and exit')
+  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean }) => {
     try {
+      // Handle --init mode
+      if (options.init) {
+        await runInit(options.directory);
+        process.exit(0);
+      }
+
       // Parse max iterations
       const maxIterations = parseInt(maxIterationsStr, 10);
       if (isNaN(maxIterations) || maxIterations < 1) {
@@ -66,6 +75,7 @@ program
         tool: options.tool,
         directory: options.directory,
         maxIterations,
+        dryRun: options.dryRun,
       });
 
       // Run the agent

@@ -71,6 +71,8 @@ export interface AgentConfig {
   iterationDelay: number;
   /** Completion signal to detect */
   completionSignal: string;
+  /** Dry-run mode: simulate iterations without spawning tools */
+  dryRun: boolean;
 }
 
 /**
