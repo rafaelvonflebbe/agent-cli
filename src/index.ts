@@ -4,14 +4,17 @@
  */
 
 import { Command } from 'commander';
-import { createConfig, type ToolType } from './core/config.js';
+import { createConfig, isToolRegistered, getAvailableToolNames, type ToolType } from './core/config.js';
 import { runAgent } from './core/iterator.js';
 import { runInit } from './core/init.js';
-import { error, success } from './utils/logger.js';
+import { createSessionManager } from './core/session.js';
+import { error, success, info, warn } from './utils/logger.js';
 import { fileExistsSync } from './utils/file-utils.js';
 import { join } from 'path';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
+import { createPRDManager } from './core/prd.js';
+import chalk from 'chalk';
 
 // Package info - use __dirname for ES modules compatibility
 const __filename = fileURLToPath(import.meta.url);
@@ -31,11 +34,13 @@ program
 
 program
   .argument('[max_iterations]', 'Maximum number of iterations', '10')
-  .option('--tool <amp|claude>', 'AI tool to use', 'amp')
+  .option('--tool <tool>', 'AI tool to use (registered tools: use "list" to see available)', 'claude')
   .option('--directory <path>', 'Working directory containing prd.json', process.cwd())
   .option('--dry-run', 'Simulate iterations without spawning tools')
   .option('--init', 'Bootstrap agent-cli files in the target directory and exit')
-  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean }) => {
+  .option('--stories <number>', 'Maximum number of stories to complete per run')
+  .option('--resume', 'Resume from a previous interrupted session')
+  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; stories?: string; resume?: boolean }) => {
     try {
       // Handle --init mode
       if (options.init) {
@@ -50,9 +55,9 @@ program
         process.exit(1);
       }
 
-      // Validate tool
-      if (!['amp', 'claude'].includes(options.tool)) {
-        error(`Invalid tool: ${options.tool}. Must be 'amp' or 'claude'`);
+      // Validate tool against registry
+      if (!isToolRegistered(options.tool)) {
+        error(`Unknown tool: '${options.tool}'. Available tools: ${getAvailableToolNames().join(', ')}`);
         process.exit(1);
       }
 
@@ -71,12 +76,33 @@ program
       }
 
       // Create config
+      let maxStories: number | undefined;
+      if (options.stories) {
+        maxStories = parseInt(options.stories, 10);
+        if (isNaN(maxStories) || maxStories < 1) {
+          error('--stories must be a positive integer');
+          process.exit(1);
+        }
+      }
+
       const config = createConfig({
         tool: options.tool,
         directory: options.directory,
         maxIterations,
         dryRun: options.dryRun,
+        maxStories,
+        resume: options.resume,
       });
+
+      // Check for existing session
+      const sessionManager = createSessionManager(options.directory);
+      const sessionExists = await sessionManager.exists();
+
+      if (sessionExists && !options.resume) {
+        const session = await sessionManager.load();
+        const count = session.completedStoryIds.length;
+        warn(`Previous session found (${count} stories completed). Use --resume to continue from where you left off.`);
+      }
 
       // Run the agent
       await runAgent(config);
@@ -89,6 +115,96 @@ program
       process.exit(1);
     }
   });
+
+/**
+ * Status subcommand - show completed and pending stories
+ */
+const statusCommand = new Command('status');
+statusCommand
+  .description('Show completed and pending stories from prd.json')
+  .option('-d, --dir <path>', 'Working directory containing prd.json', process.cwd())
+  .action(async (options: { dir: string }) => {
+    try {
+      const directory = options.dir;
+      const prdPath = join(directory, 'prd.json');
+      if (!fileExistsSync(prdPath)) {
+        error(`prd.json not found in: ${directory}`);
+        process.exit(1);
+      }
+
+      const manager = createPRDManager(directory);
+      await manager.load();
+      const status = manager.getStatus();
+
+      const stories = manager.getPRD().userStories;
+      const completed = stories.filter(s => s.passes).sort((a, b) => a.priority - b.priority);
+      const pending = stories.filter(s => !s.passes).sort((a, b) => a.priority - b.priority);
+      const ordered = [...completed, ...pending];
+
+      const statusIcon = (done: boolean) => done ? chalk.green('✔') : chalk.yellow('●');
+      const colStatus = 4;
+      const colId = 8;
+      const colPri = 9;
+      const colTitle = 40;
+      const colCriteria = 18;
+
+      const header = [
+        'Stat'.padEnd(colStatus),
+        'ID'.padEnd(colId),
+        'Priority'.padEnd(colPri),
+        'Title'.padEnd(colTitle),
+        'Criteria'.padEnd(colCriteria),
+      ].join(' ');
+      const separator = '─'.repeat(header.length);
+
+      console.log('');
+      info(`Project: ${manager.getProjectName()}`);
+      console.log(chalk.gray(separator));
+      console.log(chalk.bold(header));
+      console.log(chalk.gray(separator));
+
+      for (const story of ordered) {
+        const icon = statusIcon(story.passes);
+        const id = story.id.padEnd(colId);
+        const pri = String(story.priority).padEnd(colPri);
+        const title = story.title.length > colTitle - 1
+          ? story.title.slice(0, colTitle - 2) + '…'
+          : story.title.padEnd(colTitle);
+        const criteria = `${story.acceptanceCriteria.length} criteria`.padEnd(colCriteria);
+        console.log(`${icon}  ${id} ${pri} ${title} ${criteria}`);
+
+        // Show blocked-by info for pending stories with unmet dependencies
+        if (!story.passes && story.dependsOn && story.dependsOn.length > 0) {
+          const unmet = manager.getUnmetDependencies(story);
+          if (unmet.length > 0) {
+            console.log(chalk.gray(`     blocked by: ${unmet.join(', ')}`));
+          }
+        }
+      }
+
+      console.log(chalk.gray(separator));
+      console.log(
+        chalk.green(`${completed.length} completed`) +
+        '  ' +
+        chalk.yellow(`${pending.length} pending`) +
+        '  ' +
+        chalk.gray(`${status.total} total`),
+      );
+      console.log('');
+
+      if (status.allComplete) {
+        success('All stories are complete!');
+      }
+
+      process.exit(0);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      error(`Failed to get status: ${message}`);
+      process.exit(1);
+    }
+  });
+
+program.addCommand(statusCommand);
 
 // Parse command line arguments
 program.parseAsync(process.argv).catch((err: unknown) => {

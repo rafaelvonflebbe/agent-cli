@@ -46,11 +46,11 @@ export async function runInit(targetDir: string): Promise<void> {
   await copyFileTo(sourceAgentCliMd, destAgentCliMd);
   success('  Created agent-cli.md');
 
-  // Create progress.txt with standard header
-  const destProgress = join(targetDir, 'progress.txt');
+  // Create progress.log with standard header
+  const destProgress = join(targetDir, 'progress.log');
   const header = `# Agent CLI Progress Log\nStarted: ${new Date().toISOString()}\n---\n`;
   await writeText(destProgress, header);
-  success('  Created progress.txt');
+  success('  Created progress.log');
 
   // Handle prd.json — skip if it already exists
   const destPrd = join(targetDir, 'prd.json');

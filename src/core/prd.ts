@@ -3,12 +3,16 @@
  */
 
 import type { PRD, UserStory, PRDStatus } from './types.js';
-import { readJSON, writeJSON, fileExists, fileExistsSync } from '../utils/file-utils.js';
-import { join } from 'path';
+import { readJSON, writeJSON, fileExistsSync } from '../utils/file-utils.js';
+import { join, dirname } from 'path';
 import { error, warn } from '../utils/logger.js';
+import Ajv from 'ajv';
 
 /** Default PRD file name */
 export const PRD_FILE = 'prd.json';
+
+/** Schema file name */
+export const PRD_SCHEMA_FILE = 'prd.schema.json';
 
 /**
  * PRD Manager class
@@ -16,6 +20,7 @@ export const PRD_FILE = 'prd.json';
 export class PRDManager {
   private prd: PRD | null = null;
   private readonly path: string;
+  private static schemaValidator: Ajv | null = null;
 
   constructor(directory: string) {
     this.path = join(directory, PRD_FILE);
@@ -29,6 +34,20 @@ export class PRDManager {
   }
 
   /**
+   * Get the Ajv schema validator (lazy-loaded, cached)
+   */
+  private async getSchemaValidator(): Promise<Ajv> {
+    if (!PRDManager.schemaValidator) {
+      const schemaPath = join(dirname(new URL(import.meta.url).pathname), '..', '..', PRD_SCHEMA_FILE);
+      const schema = await readJSON<object>(schemaPath);
+      const ajv = new Ajv({ allErrors: true });
+      PRDManager.schemaValidator = ajv;
+      ajv.addSchema(schema, 'prd');
+    }
+    return PRDManager.schemaValidator;
+  }
+
+  /**
    * Load PRD from file
    * @throws Error if file doesn't exist or is invalid
    */
@@ -39,7 +58,8 @@ export class PRDManager {
 
     try {
       this.prd = await readJSON<PRD>(this.path);
-      this.validate(this.prd);
+      await this.validateWithSchema(this.prd);
+      this.validateDependencies(this.prd);
       return this.prd;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -60,6 +80,34 @@ export class PRDManager {
   }
 
   /**
+   * Check if a story's dependencies are all met
+   */
+  private areDependenciesMet(story: UserStory): boolean {
+    if (!story.dependsOn || story.dependsOn.length === 0) {
+      return true;
+    }
+    const prd = this.getPRD();
+    return story.dependsOn.every(depId => {
+      const dep = prd.userStories.find(s => s.id === depId);
+      return dep?.passes === true;
+    });
+  }
+
+  /**
+   * Get unmet dependencies for a story
+   */
+  getUnmetDependencies(story: UserStory): string[] {
+    if (!story.dependsOn || story.dependsOn.length === 0) {
+      return [];
+    }
+    const prd = this.getPRD();
+    return story.dependsOn.filter(depId => {
+      const dep = prd.userStories.find(s => s.id === depId);
+      return !dep || !dep.passes;
+    });
+  }
+
+  /**
    * Get PRD status
    */
   getStatus(): PRDStatus {
@@ -69,9 +117,9 @@ export class PRDManager {
     const incomplete = total - completed;
     const allComplete = incomplete === 0;
 
-    // Find highest priority incomplete story (lowest priority number = highest priority)
-    const incompleteStories = prd.userStories
-      .filter(s => !s.passes)
+    // Find highest priority incomplete story whose dependencies are met
+    const eligibleStories = prd.userStories
+      .filter(s => !s.passes && this.areDependenciesMet(s))
       .sort((a, b) => a.priority - b.priority);
 
     return {
@@ -79,7 +127,7 @@ export class PRDManager {
       completed,
       incomplete,
       allComplete,
-      nextStory: incompleteStories[0],
+      nextStory: eligibleStories[0],
     };
   }
 
@@ -121,6 +169,15 @@ export class PRDManager {
   }
 
   /**
+   * Update the branch name in PRD
+   */
+  async updateBranchName(branchName: string): Promise<void> {
+    const prd = this.getPRD();
+    prd.branchName = branchName;
+    await this.save();
+  }
+
+  /**
    * Get the project name from PRD
    */
   getProjectName(): string {
@@ -129,42 +186,35 @@ export class PRDManager {
   }
 
   /**
-   * Validate PRD structure
+   * Validate PRD against JSON schema
    * @throws Error if PRD is invalid
    */
-  private validate(prd: unknown): void {
-    if (!prd || typeof prd !== 'object') {
-      throw new Error('PRD must be an object');
+  private async validateWithSchema(prd: unknown): Promise<void> {
+    const ajv = await this.getSchemaValidator();
+    const valid = ajv.validate('prd', prd);
+
+    if (!valid) {
+      const errors = ajv.errors?.map(e => {
+        const field = e.instancePath ? e.instancePath.slice(1) : (e.params as { missingProperty?: string })?.missingProperty || '';
+        return field ? `${field} ${e.message}` : e.message;
+      }).join('; ');
+      throw new Error(`PRD validation failed: ${errors}`);
     }
+  }
 
-    const p = prd as Partial<PRD>;
-
-    if (!p.project || typeof p.project !== 'string') {
-      throw new Error('PRD must have a "project" string property');
-    }
-
-    if (!p.branchName || typeof p.branchName !== 'string') {
-      throw new Error('PRD must have a "branchName" string property');
-    }
-
-    if (!Array.isArray(p.userStories)) {
-      throw new Error('PRD must have a "userStories" array property');
-    }
-
-    // Validate each user story
-    for (let i = 0; i < p.userStories.length; i++) {
-      const story = p.userStories[i];
-      if (!story.id || typeof story.id !== 'string') {
-        throw new Error(`User story at index ${i} must have an "id" string property`);
-      }
-      if (!story.title || typeof story.title !== 'string') {
-        throw new Error(`User story ${story.id} must have a "title" string property`);
-      }
-      if (typeof story.priority !== 'number') {
-        throw new Error(`User story ${story.id} must have a "priority" number property`);
-      }
-      if (typeof story.passes !== 'boolean') {
-        throw new Error(`User story ${story.id} must have a "passes" boolean property`);
+  /**
+   * Validate that all dependsOn IDs reference existing story IDs
+   * Warns but does not crash on invalid references
+   */
+  private validateDependencies(prd: PRD): void {
+    const storyIds = new Set(prd.userStories.map(s => s.id));
+    for (const story of prd.userStories) {
+      if (story.dependsOn) {
+        for (const depId of story.dependsOn) {
+          if (!storyIds.has(depId)) {
+            warn(`Story ${story.id} depends on ${depId}, but no story with that ID exists`);
+          }
+        }
       }
     }
   }

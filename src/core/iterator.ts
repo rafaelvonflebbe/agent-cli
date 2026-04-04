@@ -6,11 +6,13 @@ import type { AgentConfig } from './types.js';
 import { createPRDManager, PRDManager } from './prd.js';
 import { createArchiver, Archiver } from './archiver.js';
 import { createToolRunner, ToolRunner } from './tool-runner.js';
+import { createSessionManager, SessionManager } from './session.js';
 import { validateConfig } from './config.js';
 import { info, success, error, warn, iterationHeader } from '../utils/logger.js';
 import { appendText } from '../utils/file-utils.js';
-import { captureGitStatus, diffGitStatus, displayFileChanges } from '../utils/git-utils.js';
+import { captureGitStatus, diffGitStatus, displayFileChanges, branchExists } from '../utils/git-utils.js';
 import type { FileChange } from '../utils/git-utils.js';
+import chalk from 'chalk';
 import { join } from 'path';
 
 /**
@@ -21,8 +23,12 @@ export class AgentIterator {
   private readonly prdManager: PRDManager;
   private readonly archiver: Archiver;
   private readonly toolRunner: ToolRunner;
+  private readonly sessionManager: SessionManager;
   private readonly progressFilePath: string;
   private iterationCount: number = 0;
+  private storiesCompletedThisRun: number = 0;
+  private branchName: string = '';
+  private sessionCompletedIds: string[] = [];
 
   constructor(config: AgentConfig) {
     validateConfig(config);
@@ -34,7 +40,8 @@ export class AgentIterator {
       config.tool,
       config.completionSignal
     );
-    this.progressFilePath = join(config.directory, 'progress.txt');
+    this.sessionManager = createSessionManager(config.directory);
+    this.progressFilePath = join(config.directory, 'progress.log');
   }
 
   /**
@@ -42,7 +49,8 @@ export class AgentIterator {
    */
   async run(): Promise<void> {
     const mode = this.config.dryRun ? 'DRY-RUN' : 'LIVE';
-    info(`Starting Agent CLI [${mode}] - Tool: ${this.config.tool} - Max iterations: ${this.config.maxIterations}`);
+    const storiesLimit = this.config.maxStories ? ` - Stories limit: ${this.config.maxStories}` : '';
+    info(`Starting Agent CLI [${mode}] - Tool: ${this.config.tool} - Max iterations: ${this.config.maxIterations}${storiesLimit}`);
 
     // Check if PRD exists
     if (!this.prdManager.exists()) {
@@ -51,25 +59,61 @@ export class AgentIterator {
 
     // Load PRD
     await this.prdManager.load();
-    const branchName = this.prdManager.getBranchName();
+    this.branchName = this.prdManager.getBranchName();
     info(`Project: ${this.prdManager.getProjectName()}`);
-    info(`Branch: ${branchName}`);
+    info(`Branch: ${this.branchName}`);
+
+    // Check if the branch still exists
+    const exists = await branchExists(this.branchName, this.config.directory);
+    if (!exists) {
+      await this.handleStaleBranch(this.branchName);
+      return;
+    }
 
     // Initialize archive system
-    await this.archiver.initialize(branchName);
+    await this.archiver.initialize(this.branchName);
 
     // Check for archiving (branch change)
-    const archiveCheck = await this.archiver.checkAndArchive(branchName);
+    const archiveCheck = await this.archiver.checkAndArchive(this.branchName);
     if (archiveCheck.archived) {
       info(`Archived previous run: ${archiveCheck.archive?.featureName}`);
     }
 
-    // Main iteration loop
-    for (let i = 1; i <= this.config.maxIterations; i++) {
+    // Handle session: create new or resume existing
+    if (this.config.resume) {
+      const sessionExists = await this.sessionManager.exists();
+      if (!sessionExists) {
+        warn('No previous session found. Starting fresh.');
+        await this.sessionManager.create(this.config.tool, this.branchName);
+      } else {
+        const session = await this.sessionManager.load();
+        this.sessionCompletedIds = session.completedStoryIds;
+        this.iterationCount = session.currentIteration;
+        info(`Resuming session: ${this.sessionCompletedIds.length} stories already completed, starting at iteration ${this.iterationCount + 1}`);
+      }
+    } else {
+      await this.sessionManager.create(this.config.tool, this.branchName);
+    }
+
+    // Track accumulated file changes per story for completion reports
+    const storyChanges = new Map<string, FileChange[]>();
+
+    // Main iteration loop (start from resumed iteration if applicable)
+    const startIteration = this.iterationCount + 1;
+    for (let i = startIteration; i <= this.config.maxIterations; i++) {
       this.iterationCount = i;
 
       try {
         let iterationChanges: FileChange[] = [];
+
+        // Save current story passes state to detect completions
+        const passesBefore = new Map<string, boolean>();
+        for (const story of this.prdManager.getPRD().userStories) {
+          passesBefore.set(story.id, story.passes);
+        }
+
+        // Get target story for this iteration
+        const targetStory = this.prdManager.getStatus().nextStory;
 
         // Capture git status before live iterations (skip in dry-run)
         const gitBefore = this.config.dryRun ? null : await captureGitStatus(this.config.directory);
@@ -83,6 +127,66 @@ export class AgentIterator {
         // Reload PRD to get updated status
         await this.prdManager.load();
 
+        // Detect and accumulate file changes (live mode only)
+        if (!this.config.dryRun && gitBefore) {
+          const gitAfter = await captureGitStatus(this.config.directory);
+          iterationChanges = diffGitStatus(gitBefore, gitAfter);
+          displayFileChanges(iterationChanges);
+
+          // Accumulate changes for target story
+          if (targetStory) {
+            const existing = storyChanges.get(targetStory.id) || [];
+            existing.push(...iterationChanges);
+            storyChanges.set(targetStory.id, existing);
+          }
+        }
+
+        // Check for newly completed stories and show reports (live mode only)
+        if (!this.config.dryRun) {
+          const prd = this.prdManager.getPRD();
+          for (const story of prd.userStories) {
+            if (story.passes && !passesBefore.get(story.id)) {
+              this.storiesCompletedThisRun++;
+              this.sessionCompletedIds.push(story.id);
+              await this.sessionManager.update({
+                currentIteration: i,
+                completedStoryIds: [...this.sessionCompletedIds],
+                lastStoryId: story.id,
+              });
+              const changes = storyChanges.get(story.id) || [];
+              await this.displayStoryReport(story, changes);
+              storyChanges.delete(story.id);
+            }
+          }
+        }
+
+        // In dry-run mode, track story completions from simulated updates
+        if (this.config.dryRun) {
+          const prd = this.prdManager.getPRD();
+          for (const story of prd.userStories) {
+            if (story.passes && !passesBefore.get(story.id)) {
+              this.storiesCompletedThisRun++;
+              this.sessionCompletedIds.push(story.id);
+              await this.sessionManager.update({
+                currentIteration: i,
+                completedStoryIds: [...this.sessionCompletedIds],
+                lastStoryId: story.id,
+              });
+            }
+          }
+        }
+
+        // Check if stories limit has been reached
+        if (this.config.maxStories && this.storiesCompletedThisRun >= this.config.maxStories) {
+          const status = this.prdManager.getStatus();
+          info(`Stories limit reached: ${this.storiesCompletedThisRun}/${this.config.maxStories} stories completed this run.`);
+          await this.logProgress(
+            `STORIES LIMIT REACHED — ${this.storiesCompletedThisRun}/${this.config.maxStories} stories completed this run. ` +
+            `Overall progress: ${status.completed}/${status.total} stories complete.`
+          );
+          return;
+        }
+
         // Check if all stories are complete
         if (this.prdManager.areAllStoriesComplete()) {
           await this.handleComplete();
@@ -93,14 +197,12 @@ export class AgentIterator {
         const status = this.prdManager.getStatus();
         info(`Iteration ${i} complete. Progress: ${status.completed}/${status.total} stories complete.`);
 
-        // Detect and display file changes (live mode only)
-        if (!this.config.dryRun && gitBefore) {
-          const gitAfter = await captureGitStatus(this.config.directory);
-          iterationChanges = diffGitStatus(gitBefore, gitAfter);
-          displayFileChanges(iterationChanges);
-        }
+        // Update session with current iteration (even if no story completed)
+        await this.sessionManager.update({
+          currentIteration: i,
+        });
 
-        // Log iteration to progress.txt
+        // Log iteration to progress.log
         const nextStory = status.nextStory;
         const storyInfo = nextStory
           ? `Next incomplete story: ${nextStory.id} "${nextStory.title}" (priority ${nextStory.priority})`
@@ -124,7 +226,7 @@ export class AgentIterator {
     warn(`Max iterations (${this.config.maxIterations}) reached without completing all tasks.`);
     const finalStatus = this.prdManager.getStatus();
     info(`Final progress: ${finalStatus.completed}/${finalStatus.total} stories complete.`);
-    info('Check progress.txt for details.');
+    info('Check progress.log for details.');
     await this.logProgress(
       `WARNING: Max iterations (${this.config.maxIterations}) reached without completion. ` +
       `Final progress: ${finalStatus.completed}/${finalStatus.total} stories complete.`
@@ -165,7 +267,12 @@ export class AgentIterator {
       return;
     }
 
-    const story = status.nextStory!;
+    const story = status.nextStory;
+    if (!story) {
+      warn(`[DRY-RUN] Iteration ${i}: No eligible story — all remaining stories have unmet dependencies.`);
+      return;
+    }
+
     iterationHeader(i, this.config.maxIterations, this.config.tool, { id: story.id, title: story.title, priority: story.priority });
     info(`[DRY-RUN] Iteration ${i}: Would pick story ${story.id} "${story.title}" (priority ${story.priority})`);
     info(`[DRY-RUN] Iteration ${i}: Would run tool: ${this.config.tool}`);
@@ -183,22 +290,80 @@ export class AgentIterator {
     success('All tasks completed!');
     success(`Completed at iteration ${this.iterationCount} of ${this.config.maxIterations}`);
     info(`Total stories: ${finalStatus.total} | Completed: ${finalStatus.completed}`);
+    if (this.config.maxStories) {
+      info(`Stories completed this run: ${this.storiesCompletedThisRun}/${this.config.maxStories}`);
+    }
+    // Delete session file on clean exit
+    await this.sessionManager.delete();
     await this.logProgress(
       `ALL COMPLETE — Finished at iteration ${this.iterationCount}/${this.config.maxIterations}. ` +
-      `Total stories: ${finalStatus.total}, Completed: ${finalStatus.completed}`
+      `Total stories: ${finalStatus.total}, Completed: ${finalStatus.completed}` +
+      (this.config.maxStories ? `, This run: ${this.storiesCompletedThisRun}/${this.config.maxStories}` : '')
     );
   }
 
   /**
-   * Append a timestamped entry to progress.txt
+   * Handle a stale branch that no longer exists
+   */
+  private async handleStaleBranch(branchName: string): Promise<void> {
+    warn(`Branch '${branchName}' no longer exists!`);
+
+    // Archive the run
+    await this.archiver.archive(branchName);
+
+    // Initialize progress file so we can log to it
+    await this.archiver.initProgressFile(branchName);
+
+    // Clear branchName in prd.json
+    await this.prdManager.updateBranchName('');
+
+    // Log to progress.log
+    await this.logProgress(
+      `STALE BRANCH: Branch '${branchName}' no longer exists. ` +
+      `Cleared branchName in prd.json and archived the run. Stopping loop.`
+    );
+
+    error(`Cannot continue: branch '${branchName}' no longer exists. Update prd.json with a valid branchName to resume.`);
+  }
+
+  /**
+   * Display and log a story completion report with accumulated file changes
+   */
+  private async displayStoryReport(
+    story: { id: string; title: string },
+    changes: FileChange[]
+  ): Promise<void> {
+    if (changes.length === 0) return;
+
+    // Display on CLI with chalk colors
+    console.log(chalk.cyan(`\n  Story ${story.id} "${story.title}" — File changes:`));
+    for (const change of changes) {
+      if (change.type === 'removed') {
+        console.log(chalk.red(`    - ${change.path} (removed)`));
+      } else {
+        console.log(chalk.green(`    + ${change.path} (${change.type})`));
+      }
+    }
+
+    // Append to progress.log
+    const lines = [
+      `Story ${story.id} "${story.title}" — File changes:`,
+      ...changes.map(c => `  ${c.type === 'removed' ? '-' : '+'} ${c.path} (${c.type})`),
+    ];
+    await this.logProgress(lines.join('\n'));
+  }
+
+  /**
+   * Append a timestamped entry to progress.log
    */
   private async logProgress(message: string): Promise<void> {
     const timestamp = new Date().toISOString();
-    const entry = `\n[${timestamp}] ${message}\n`;
+    const branchInfo = this.branchName ? ` [branch: ${this.branchName}]` : '';
+    const entry = `\n[${timestamp}]${branchInfo} ${message}\n`;
     try {
       await appendText(this.progressFilePath, entry);
     } catch {
-      warn('Failed to write to progress.txt');
+      warn('Failed to write to progress.log');
     }
   }
 

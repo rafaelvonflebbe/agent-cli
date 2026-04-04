@@ -134,7 +134,7 @@ Quando o `branchName` no PRD muda entre execuções, o Agent CLI arquiva o estad
 ```
 archive/YYYY-MM-DD-nome-da-feature/
   ├── prd.json
-  └── progress.txt
+  └── progress.log
 ```
 
 ## Encerramento

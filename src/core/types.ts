@@ -20,6 +20,8 @@ export interface UserStory {
   passes: boolean;
   /** Additional notes or context */
   notes: string;
+  /** Story IDs this story depends on (all must have passes: true before this story is eligible) */
+  dependsOn?: string[];
 }
 
 /**
@@ -37,9 +39,21 @@ export interface PRD {
 }
 
 /**
- * AI tool selection
+ * AI tool selection — any registered tool name
  */
-export type ToolType = 'amp' | 'claude';
+export type ToolType = string;
+
+/**
+ * Configuration for a registered tool
+ */
+export interface ToolConfig {
+  /** Shell command to execute */
+  command: string;
+  /** Arguments to pass to the command */
+  args: string[];
+  /** Prompt file name to pipe to stdin */
+  promptFile: string;
+}
 
 /**
  * Result from running an AI tool
@@ -55,6 +69,10 @@ export interface ToolResult {
   completed: boolean;
   /** Whether the process was terminated by a signal */
   signal: string | null;
+  /** Total cost in USD (claude stream-json only) */
+  totalCostUsd?: number;
+  /** Duration in milliseconds (claude stream-json only) */
+  durationMs?: number;
 }
 
 /**
@@ -73,6 +91,10 @@ export interface AgentConfig {
   completionSignal: string;
   /** Dry-run mode: simulate iterations without spawning tools */
   dryRun: boolean;
+  /** Maximum number of stories to complete per run (undefined = unlimited) */
+  maxStories?: number;
+  /** Resume from a previous interrupted session */
+  resume?: boolean;
 }
 
 /**
@@ -99,6 +121,24 @@ export interface ArchiveCheckResult {
   previousBranch?: string;
   /** Current branch name */
   currentBranch: string;
+}
+
+/**
+ * Session state persisted between interrupted runs
+ */
+export interface SessionState {
+  /** Current iteration number when session was saved */
+  currentIteration: number;
+  /** Story IDs completed in this run */
+  completedStoryIds: string[];
+  /** Last story ID being worked on */
+  lastStoryId: string | null;
+  /** When the session was last updated */
+  timestamp: string;
+  /** Tool being used */
+  tool: string;
+  /** Branch name */
+  branchName: string;
 }
 
 /**

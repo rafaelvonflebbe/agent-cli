@@ -101,6 +101,18 @@ export function diffGitStatus(
 }
 
 /**
+ * Check if a git branch exists locally
+ */
+export async function branchExists(branchName: string, directory: string): Promise<boolean> {
+  try {
+    const { stdout } = await execAsync(`git branch --list "${branchName}"`, { cwd: directory });
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Display file changes with colored prefixes
  */
 export function displayFileChanges(changes: FileChange[]): void {

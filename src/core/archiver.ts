@@ -14,6 +14,7 @@ import {
   fileExistsSync,
 } from '../utils/file-utils.js';
 import { info, warn } from '../utils/logger.js';
+import { rename } from 'fs/promises';
 
 /** Last branch file name */
 const LAST_BRANCH_FILE = '.last-branch';
@@ -22,7 +23,10 @@ const LAST_BRANCH_FILE = '.last-branch';
 const ARCHIVE_DIR = 'archive';
 
 /** Progress file name */
-const PROGRESS_FILE = 'progress.txt';
+const PROGRESS_FILE = 'progress.log';
+
+/** Legacy progress file name (for migration) */
+const LEGACY_PROGRESS_FILE = 'progress.txt';
 
 /** PRD file name */
 const PRD_FILE = 'prd.json';
@@ -62,7 +66,7 @@ export class Archiver {
     const archiveInfo = await this.archive(previousBranch);
 
     // Reset progress file for new run
-    await this.resetProgressFile();
+    await this.resetProgressFile(currentBranch);
 
     // Update last branch file
     await this.writeLastBranch(currentBranch);
@@ -128,9 +132,10 @@ export class Archiver {
   /**
    * Reset the progress file for a new run
    */
-  async resetProgressFile(): Promise<void> {
+  async resetProgressFile(branchName?: string): Promise<void> {
     const progressPath = join(this.directory, PROGRESS_FILE);
     const header = `# Agent CLI Progress Log
+Branch: ${branchName || 'unknown'}
 Started: ${new Date().toISOString()}
 ---
 `;
@@ -161,23 +166,35 @@ Started: ${new Date().toISOString()}
   }
 
   /**
-   * Initialize progress file if it doesn't exist
+   * Initialize progress file if it doesn't exist.
+   * Migrates legacy progress.txt to progress.log if needed.
    */
-  async initProgressFile(): Promise<void> {
+  async initProgressFile(branchName?: string): Promise<void> {
     const progressPath = join(this.directory, PROGRESS_FILE);
+    const legacyPath = join(this.directory, LEGACY_PROGRESS_FILE);
+
+    // Migrate legacy progress.txt → progress.log
+    if (fileExistsSync(legacyPath) && !fileExistsSync(progressPath)) {
+      try {
+        await rename(legacyPath, progressPath);
+        info(`Migrated ${LEGACY_PROGRESS_FILE} → ${PROGRESS_FILE}`);
+      } catch {
+        warn(`Failed to migrate ${LEGACY_PROGRESS_FILE} to ${PROGRESS_FILE}`);
+      }
+    }
 
     if (fileExistsSync(progressPath)) {
       return;
     }
 
-    await this.resetProgressFile();
+    await this.resetProgressFile(branchName);
   }
 
   /**
    * Initialize archive system (checks for existing progress file)
    */
   async initialize(currentBranch: string): Promise<void> {
-    await this.initProgressFile();
+    await this.initProgressFile(currentBranch);
     await this.writeLastBranch(currentBranch);
   }
 }

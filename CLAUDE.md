@@ -20,7 +20,7 @@ Agent CLI is an autonomous loop that drives an AI tool (amp or claude) to iterat
 
 **Core loop flow (`src/core/iterator.ts`):**
 1. Load `prd.json` via `PRDManager`
-2. Initialize archive system (creates `progress.txt` if missing)
+2. Initialize archive system (creates `progress.log` if missing)
 3. Check if branch changed — if so, archive previous run
 4. Iterate up to `maxIterations`: spawn the AI tool, stream its prompt file to stdin, capture stdout to detect `<promise>COMPLETE</promise>` signal
 5. After each iteration, reload PRD to check if all stories have `passes: true`
@@ -28,7 +28,7 @@ Agent CLI is an autonomous loop that drives an AI tool (amp or claude) to iterat
 **Key modules:**
 - `src/core/tool-runner.ts` — Spawns `amp` or `claude` as child processes. Pipes the prompt file (`CLAUDE.md` for claude, `prompt.md` for amp) to stdin. Detects completion by scanning stdout for the signal string. In `--dry-run` mode, this module is bypassed entirely — the iterator simulates progress without spawning external processes.
 - `src/core/prd.ts` — `PRDManager` class: load/save/validate `prd.json`, track story completion, find next incomplete story by priority (lower number = higher priority).
-- `src/core/archiver.ts` — When `branchName` in PRD changes, archives previous `prd.json` + `progress.txt` to `archive/YYYY-MM-DD-feature-name/`. Tracks last branch in `.last-branch`.
+- `src/core/archiver.ts` — When `branchName` in PRD changes, archives previous `prd.json` + `progress.log` to `archive/YYYY-MM-DD-feature-name/`. Tracks last branch in `.last-branch`.
 - `src/core/config.ts` — Defaults (tool: `amp`, maxIterations: `10`, delay: `2000ms`), validation, and tool command/args mapping.
 - `src/core/types.ts` — All TypeScript interfaces: `PRD`, `UserStory`, `AgentConfig`, `ToolResult`, `ArchiveInfo`, etc.
 
@@ -43,3 +43,4 @@ The working directory must contain `prd.json` with: `project`, `branchName`, `de
 - ESM-only (`"type": "module"`), ES2022 target, strict mode
 - Factory functions (`createXxx`) alongside classes for each module
 - Node >= 20
+- Do NOT add `Co-Authored-By` lines to commits — no co-author trailing lines
