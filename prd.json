@@ -216,6 +216,24 @@
       "priority": 3,
       "passes": true,
       "notes": "Investigation showed: stream-json requires --verbose flag. Events: system (init), stream_event (real-time deltas), assistant (complete message), user (tool results), result (final). Key stream_event.event types: content_block_start (tool_use detection), content_block_delta (text_delta for text, thinking_delta for thinking, input_json_delta for tool input)."
+    },
+    {
+      "id": "US-014",
+      "title": "Display status command output as a formatted table",
+      "description": "Replace the current plain-text status output with a formatted table that shows all stories (completed and pending) in a single view. Use chalk for colors: green checkmark for completed stories, yellow circle for pending. Columns: Status, ID, Priority, Title, Acceptance Criteria count. Add a summary row at the bottom with totals. Sort by priority within each group (completed first, then pending). Keep the --dir flag working as-is. Use only chalk and Node built-ins — no external table library.",
+      "acceptanceCriteria": [
+        "Replace current plain-text status output with a table showing all stories",
+        "Table columns: Status (icon), ID, Priority, Title, Acceptance Criteria (count)",
+        "Completed stories show green checkmark, pending stories show yellow circle",
+        "Sort completed stories first (by priority), then pending stories (by priority)",
+        "Summary row at bottom shows total completed vs pending counts",
+        "Keep --dir flag working unchanged",
+        "No external table library — use chalk and manual formatting only",
+        "Build passes with npm run build"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Replaced plain-text output with formatted table using chalk. Shows all stories sorted by completion status then priority, with summary row."
     }
   ]
 }

@@ -123,24 +123,56 @@ statusCommand
       await manager.load();
       const status = manager.getStatus();
 
+      const stories = manager.getPRD().userStories;
+      const completed = stories.filter(s => s.passes).sort((a, b) => a.priority - b.priority);
+      const pending = stories.filter(s => !s.passes).sort((a, b) => a.priority - b.priority);
+      const ordered = [...completed, ...pending];
+
+      const statusIcon = (done: boolean) => done ? chalk.green('✔') : chalk.yellow('●');
+      const colStatus = 4;
+      const colId = 8;
+      const colPri = 9;
+      const colTitle = 40;
+      const colCriteria = 18;
+
+      const header = [
+        'Stat'.padEnd(colStatus),
+        'ID'.padEnd(colId),
+        'Priority'.padEnd(colPri),
+        'Title'.padEnd(colTitle),
+        'Criteria'.padEnd(colCriteria),
+      ].join(' ');
+      const separator = '─'.repeat(header.length);
+
       console.log('');
       info(`Project: ${manager.getProjectName()}`);
-      console.log(`  Total stories: ${status.total}`);
-      console.log(`  Completed:     ${chalk.green(String(status.completed))}`);
-      console.log(`  Pending:       ${chalk.yellow(String(status.incomplete))}`);
+      console.log(chalk.gray(separator));
+      console.log(chalk.bold(header));
+      console.log(chalk.gray(separator));
+
+      for (const story of ordered) {
+        const icon = statusIcon(story.passes);
+        const id = story.id.padEnd(colId);
+        const pri = String(story.priority).padEnd(colPri);
+        const title = story.title.length > colTitle - 1
+          ? story.title.slice(0, colTitle - 2) + '…'
+          : story.title.padEnd(colTitle);
+        const criteria = `${story.acceptanceCriteria.length} criteria`.padEnd(colCriteria);
+        console.log(`${icon}  ${id} ${pri} ${title} ${criteria}`);
+      }
+
+      console.log(chalk.gray(separator));
+      console.log(
+        chalk.green(`${completed.length} completed`) +
+        '  ' +
+        chalk.yellow(`${pending.length} pending`) +
+        '  ' +
+        chalk.gray(`${status.total} total`),
+      );
       console.log('');
 
       if (status.allComplete) {
         success('All stories are complete!');
-      } else {
-        const pending = manager.getPRD().userStories
-          .filter(s => !s.passes)
-          .sort((a, b) => a.priority - b.priority);
-        console.log(chalk.yellow('Pending stories:'));
-        for (const story of pending) {
-          console.log(`  ${chalk.gray(story.id)} ${story.title} ${chalk.gray(`(priority ${story.priority})`)}`);
-        }
-        console.log('');
       }
 
       process.exit(0);
