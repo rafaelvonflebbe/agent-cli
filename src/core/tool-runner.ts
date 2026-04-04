@@ -9,6 +9,78 @@ import { getToolCommand, getPromptFile } from './config.js';
 import { join } from 'path';
 import { info, error, iterationHeader } from '../utils/logger.js';
 import { fileExistsSync } from '../utils/file-utils.js';
+import chalk from 'chalk';
+
+/**
+ * Parse a single stream-json event line and display relevant output
+ */
+function handleStreamEvent(line: string): { completed: boolean; cost?: number; duration?: number } {
+  let completed = false;
+  let cost: number | undefined;
+  let duration: number | undefined;
+
+  let event: Record<string, unknown>;
+  try {
+    event = JSON.parse(line);
+  } catch {
+    // Not JSON — ignore
+    return { completed: false };
+  }
+
+  const eventType = event.type as string | undefined;
+
+  if (eventType === 'stream_event') {
+    const streamEvent = event.event as Record<string, unknown> | undefined;
+    if (!streamEvent) return { completed: false };
+
+    const seType = streamEvent.type as string | undefined;
+
+    if (seType === 'content_block_start') {
+      const contentBlock = streamEvent.content_block as Record<string, unknown> | undefined;
+      if (contentBlock?.type === 'tool_use') {
+        const toolName = contentBlock.name as string | undefined;
+        if (toolName) {
+          const input = contentBlock.input as Record<string, unknown> | undefined;
+          const detail = input && Object.keys(input).length > 0
+            ? ` ${JSON.stringify(input)}`
+            : '';
+          process.stdout.write(chalk.magenta(`  Using: ${toolName}${detail}\n`));
+        }
+      }
+    } else if (seType === 'content_block_delta') {
+      const delta = streamEvent.delta as Record<string, unknown> | undefined;
+      if (!delta) return { completed: false };
+      const deltaType = delta.type as string | undefined;
+
+      if (deltaType === 'text_delta') {
+        const text = delta.text as string | undefined;
+        if (text) {
+          process.stdout.write(text);
+        }
+      } else if (deltaType === 'input_json_delta') {
+        const partialJson = delta.partial_json as string | undefined;
+        if (partialJson) {
+          process.stdout.write(chalk.gray(partialJson));
+        }
+      }
+      // thinking_delta is intentionally not displayed to reduce noise
+    }
+  } else if (eventType === 'result') {
+    const resultText = event.result as string | undefined;
+    if (resultText?.includes('<promise>COMPLETE</promise>')) {
+      completed = true;
+    }
+
+    if (event.total_cost_usd !== undefined) {
+      cost = Number(event.total_cost_usd);
+    }
+    if (event.duration_ms !== undefined) {
+      duration = Number(event.duration_ms);
+    }
+  }
+
+  return { completed, cost, duration };
+}
 
 /**
  * Tool Runner class
@@ -55,13 +127,40 @@ export class ToolRunner {
     // Collect output
     let stdout = '';
     let stderr = '';
+    let completed = false;
+    let totalCostUsd: number | undefined;
+    let durationMs: number | undefined;
 
-    // Stream stdout to console and capture for completion detection
-    proc.stdout?.on('data', (data) => {
-      const chunk = data.toString();
-      stdout += chunk;
-      process.stdout.write(chunk);
-    });
+    if (this.tool === 'claude') {
+      // Parse stream-json events line-by-line
+      let lineBuffer = '';
+      proc.stdout?.on('data', (data) => {
+        const chunk = data.toString();
+        stdout += chunk;
+        lineBuffer += chunk;
+
+        // Process complete lines
+        let newlineIdx: number;
+        while ((newlineIdx = lineBuffer.indexOf('\n')) !== -1) {
+          const line = lineBuffer.slice(0, newlineIdx).trim();
+          lineBuffer = lineBuffer.slice(newlineIdx + 1);
+
+          if (line) {
+            const result = handleStreamEvent(line);
+            if (result.completed) completed = true;
+            if (result.cost !== undefined) totalCostUsd = result.cost;
+            if (result.duration !== undefined) durationMs = result.duration;
+          }
+        }
+      });
+    } else {
+      // amp: stream stdout raw to console and capture
+      proc.stdout?.on('data', (data) => {
+        const chunk = data.toString();
+        stdout += chunk;
+        process.stdout.write(chunk);
+      });
+    }
 
     // Stream stderr to console and capture
     proc.stderr?.on('data', (data) => {
@@ -73,7 +172,17 @@ export class ToolRunner {
     // Wait for process to complete
     return new Promise<ToolResult>((resolve) => {
       proc.on('close', (code, signal) => {
-        const completed = stdout.includes(this.completionSignal);
+        // Fallback: also check raw stdout for the completion signal
+        if (!completed) {
+          completed = stdout.includes(this.completionSignal);
+        }
+
+        if (totalCostUsd !== undefined) {
+          info(`Cost: $${totalCostUsd.toFixed(4)}`);
+        }
+        if (durationMs !== undefined) {
+          info(`Duration: ${(durationMs / 1000).toFixed(1)}s`);
+        }
 
         const result: ToolResult = {
           exitCode: code,
@@ -81,6 +190,8 @@ export class ToolRunner {
           stderr,
           completed,
           signal: signal || null,
+          totalCostUsd,
+          durationMs,
         };
 
         resolve(result);

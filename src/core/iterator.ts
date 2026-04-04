@@ -9,7 +9,7 @@ import { createToolRunner, ToolRunner } from './tool-runner.js';
 import { validateConfig } from './config.js';
 import { info, success, error, warn, iterationHeader } from '../utils/logger.js';
 import { appendText } from '../utils/file-utils.js';
-import { captureGitStatus, diffGitStatus, displayFileChanges } from '../utils/git-utils.js';
+import { captureGitStatus, diffGitStatus, displayFileChanges, branchExists } from '../utils/git-utils.js';
 import type { FileChange } from '../utils/git-utils.js';
 import chalk from 'chalk';
 import { join } from 'path';
@@ -24,6 +24,8 @@ export class AgentIterator {
   private readonly toolRunner: ToolRunner;
   private readonly progressFilePath: string;
   private iterationCount: number = 0;
+  private storiesCompletedThisRun: number = 0;
+  private branchName: string = '';
 
   constructor(config: AgentConfig) {
     validateConfig(config);
@@ -43,7 +45,8 @@ export class AgentIterator {
    */
   async run(): Promise<void> {
     const mode = this.config.dryRun ? 'DRY-RUN' : 'LIVE';
-    info(`Starting Agent CLI [${mode}] - Tool: ${this.config.tool} - Max iterations: ${this.config.maxIterations}`);
+    const storiesLimit = this.config.maxStories ? ` - Stories limit: ${this.config.maxStories}` : '';
+    info(`Starting Agent CLI [${mode}] - Tool: ${this.config.tool} - Max iterations: ${this.config.maxIterations}${storiesLimit}`);
 
     // Check if PRD exists
     if (!this.prdManager.exists()) {
@@ -52,15 +55,22 @@ export class AgentIterator {
 
     // Load PRD
     await this.prdManager.load();
-    const branchName = this.prdManager.getBranchName();
+    this.branchName = this.prdManager.getBranchName();
     info(`Project: ${this.prdManager.getProjectName()}`);
-    info(`Branch: ${branchName}`);
+    info(`Branch: ${this.branchName}`);
+
+    // Check if the branch still exists
+    const exists = await branchExists(this.branchName, this.config.directory);
+    if (!exists) {
+      await this.handleStaleBranch(this.branchName);
+      return;
+    }
 
     // Initialize archive system
-    await this.archiver.initialize(branchName);
+    await this.archiver.initialize(this.branchName);
 
     // Check for archiving (branch change)
-    const archiveCheck = await this.archiver.checkAndArchive(branchName);
+    const archiveCheck = await this.archiver.checkAndArchive(this.branchName);
     if (archiveCheck.archived) {
       info(`Archived previous run: ${archiveCheck.archive?.featureName}`);
     }
@@ -115,11 +125,33 @@ export class AgentIterator {
           const prd = this.prdManager.getPRD();
           for (const story of prd.userStories) {
             if (story.passes && !passesBefore.get(story.id)) {
+              this.storiesCompletedThisRun++;
               const changes = storyChanges.get(story.id) || [];
               await this.displayStoryReport(story, changes);
               storyChanges.delete(story.id);
             }
           }
+        }
+
+        // In dry-run mode, track story completions from simulated updates
+        if (this.config.dryRun) {
+          const prd = this.prdManager.getPRD();
+          for (const story of prd.userStories) {
+            if (story.passes && !passesBefore.get(story.id)) {
+              this.storiesCompletedThisRun++;
+            }
+          }
+        }
+
+        // Check if stories limit has been reached
+        if (this.config.maxStories && this.storiesCompletedThisRun >= this.config.maxStories) {
+          const status = this.prdManager.getStatus();
+          info(`Stories limit reached: ${this.storiesCompletedThisRun}/${this.config.maxStories} stories completed this run.`);
+          await this.logProgress(
+            `STORIES LIMIT REACHED — ${this.storiesCompletedThisRun}/${this.config.maxStories} stories completed this run. ` +
+            `Overall progress: ${status.completed}/${status.total} stories complete.`
+          );
+          return;
         }
 
         // Check if all stories are complete
@@ -215,10 +247,38 @@ export class AgentIterator {
     success('All tasks completed!');
     success(`Completed at iteration ${this.iterationCount} of ${this.config.maxIterations}`);
     info(`Total stories: ${finalStatus.total} | Completed: ${finalStatus.completed}`);
+    if (this.config.maxStories) {
+      info(`Stories completed this run: ${this.storiesCompletedThisRun}/${this.config.maxStories}`);
+    }
     await this.logProgress(
       `ALL COMPLETE — Finished at iteration ${this.iterationCount}/${this.config.maxIterations}. ` +
-      `Total stories: ${finalStatus.total}, Completed: ${finalStatus.completed}`
+      `Total stories: ${finalStatus.total}, Completed: ${finalStatus.completed}` +
+      (this.config.maxStories ? `, This run: ${this.storiesCompletedThisRun}/${this.config.maxStories}` : '')
     );
+  }
+
+  /**
+   * Handle a stale branch that no longer exists
+   */
+  private async handleStaleBranch(branchName: string): Promise<void> {
+    warn(`Branch '${branchName}' no longer exists!`);
+
+    // Archive the run
+    await this.archiver.archive(branchName);
+
+    // Initialize progress file so we can log to it
+    await this.archiver.initProgressFile(branchName);
+
+    // Clear branchName in prd.json
+    await this.prdManager.updateBranchName('');
+
+    // Log to progress.txt
+    await this.logProgress(
+      `STALE BRANCH: Branch '${branchName}' no longer exists. ` +
+      `Cleared branchName in prd.json and archived the run. Stopping loop.`
+    );
+
+    error(`Cannot continue: branch '${branchName}' no longer exists. Update prd.json with a valid branchName to resume.`);
   }
 
   /**
@@ -253,7 +313,8 @@ export class AgentIterator {
    */
   private async logProgress(message: string): Promise<void> {
     const timestamp = new Date().toISOString();
-    const entry = `\n[${timestamp}] ${message}\n`;
+    const branchInfo = this.branchName ? ` [branch: ${this.branchName}]` : '';
+    const entry = `\n[${timestamp}]${branchInfo} ${message}\n`;
     try {
       await appendText(this.progressFilePath, entry);
     } catch {

@@ -1,6 +1,6 @@
 {
-  "project": "Test Project",
-  "branchName": "feature/test",
+  "project": "agent-cli",
+  "branchName": "feat/new_tools",
   "description": "A test project for agent-cli",
   "userStories": [
     {
@@ -113,6 +113,109 @@
       "priority": 7,
       "passes": true,
       "notes": "This builds on US-006 which tracks per-iteration changes. This story tracks cumulative changes per story across potentially multiple iterations."
+    },
+    {
+      "id": "US-008",
+      "title": "Add 'status' command to show completed and pending stories",
+      "description": "Add a `status` subcommand to the agent-cli that reads prd.json and displays a summary of how many stories are completed and how many are pending. This gives users a quick way to check progress without running the agent loop.",
+      "acceptanceCriteria": [
+        "Add a `status` subcommand to the CLI in src/index.ts via commander",
+        "The command accepts --directory <path> to specify where prd.json lives (default: cwd)",
+        "Load prd.json and display: total stories, completed count, pending count",
+        "List pending stories with their id, title, and priority",
+        "If all stories are complete, show a success message",
+        "If prd.json doesn't exist, show an error",
+        "Build passes with npm run build"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "PRDManager already has getStatus() method that returns all needed data."
+    },
+    {
+      "id": "US-009",
+      "title": "Add JSON schema for prd.json validation",
+      "description": "Create a JSON schema (prd.schema.json) that validates the prd.json format. The schema should enforce all required fields: project (string), branchName (string), description (string), and userStories (array of objects with id, title, description, acceptanceCriteria, priority, passes, notes). Update PRDManager.load() to validate prd.json against this schema on load, providing clear error messages when validation fails. IMPORTANT: maintain backward compatibility — existing prd.json files must continue to work without changes. Fields like project and branchName are typically set once and do not change during the agent loop, so the schema should not enforce mutability constraints on them.",
+      "acceptanceCriteria": [
+        "Create prd.schema.json with the full schema for prd.json",
+        "Integrate schema validation into PRDManager.load() — reject invalid prd.json with a clear error message",
+        "Existing prd.json files must pass validation without any changes (backward compatible)",
+        "Schema validates required fields: project, branchName, description, userStories[]",
+        "Each userStory validates: id, title, description, acceptanceCriteria[], priority (number), passes (boolean), notes (string)",
+        "Build passes with npm run build"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "Implemented with ajv for JSON schema validation. Schema validates all required fields with clear error messages. Backward compatible — existing prd.json passes validation."
+    },
+    {
+      "id": "US-010",
+      "title": "Detect stale branch and clean up prd.json and progress.txt",
+      "description": "When the agent loop starts, check if the branchName in prd.json still exists (git branch --list). If the branch no longer exists (was merged and deleted, or removed), the loop should: (1) clear branchName from prd.json (set to empty string or remove it), (2) log in progress.txt which branch was being worked on and that it no longer exists, (3) archive the run under that branch name, (4) stop the loop since there is no valid branch to work on. Additionally, progress.txt should always include the branchName in its header and in each iteration entry so it's clear which branch was active during execution.",
+      "acceptanceCriteria": [
+        "On loop start, check if prd.json branchName exists via git branch --list",
+        "If branch no longer exists: clear branchName in prd.json, log to progress.txt which branch was stale, and stop the loop",
+        "progress.txt header includes the active branchName",
+        "Each iteration entry in progress.txt includes the branchName that was active",
+        "When a stale branch is detected, archive the run before stopping",
+        "Log a clear warning to the user that the branch no longer exists",
+        "Build passes with npm run build"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "This prevents the agent from running on a ghost branch. The branch check should happen before any iteration starts."
+    },
+    {
+      "id": "US-011",
+      "title": "Update agent-cli.md with new features documentation",
+      "description": "Update agent-cli.md (the prompt file sent to the AI tool) to document the new features added by US-008 through US-010: the status command, prd.json schema validation, and stale branch detection/cleanup. The agent needs to know about these capabilities so it can use them correctly when working on stories. This task must be executed last, after all other new stories are complete, so the documentation reflects the final state of the codebase.",
+      "acceptanceCriteria": [
+        "Update agent-cli.md to document the `status` subcommand (US-008)",
+        "Document prd.json schema validation and how it works (US-009)",
+        "Document stale branch detection behavior and what happens to prd.json/progress.txt (US-010)",
+        "Update the Architecture section if any new modules were added",
+        "Ensure the prompt file accurately reflects the current codebase capabilities",
+        "Build passes with npm run build"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "All features documented: status command, schema validation, stale branch detection, file change tracking, progress logging, --init, --dry-run, --stories flags."
+    },
+    {
+      "id": "US-012",
+      "title": "Add --stories flag to control how many stories the agent executes per run",
+      "description": "Add a --stories <number> CLI flag that lets the user choose how many stories to execute in a single run. If the flag is not provided or the value doesn't exist, the agent behaves as it does now — executes one story per iteration, iterating until max_iterations is reached or all stories are complete. If --stories 3 is passed, the agent should stop after completing 3 stories (or earlier if max_iterations is hit or all stories are done). This gives users control over how much work the agent does per run.",
+      "acceptanceCriteria": [
+        "Add --stories <number> flag to the CLI in src/index.ts via commander",
+        "If --stories is not provided, behavior is unchanged — iterate normally until max_iterations or all complete",
+        "If --stories N is provided, stop the loop after N stories have been completed in this run",
+        "The count is per-run, not total — if 2 stories were already complete and --stories 3 is passed, complete up to 3 more",
+        "Log how many stories were completed vs requested when the loop stops",
+        "Respect max_iterations as the hard upper bound — even if --stories 10 is passed, stop at max_iterations",
+        "Build passes with npm run build"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Default behavior (no flag) must remain exactly as it is today — one story per iteration, looping until done or max_iterations."
+    },
+    {
+      "id": "US-013",
+      "title": "Stream real-time claude output during iterations instead of silent waiting",
+      "description": "When running claude as the tool, the user currently sees only the iteration header and then nothing until the iteration finishes. Switch claude to use --output-format stream-json --include-partial-messages --verbose flags so that each line of stdout is a JSON event. Parse these events in real-time and display: text deltas (assistant response), tool use names and inputs, and completion status. This replaces the current silent wait with live feedback showing what the agent is doing. The completion signal (<promise>COMPLETE</promise>) should be detected in the final 'result' event's result field. Also extract and log cost/duration from the result event. For amp or other tools, keep current behavior unchanged.",
+      "acceptanceCriteria": [
+        "When tool is 'claude', add --output-format stream-json --include-partial-messages --verbose to the command args",
+        "Parse stdout line-by-line as JSON — each line is a separate event object",
+        "Display text_delta events in real-time (print the delta text directly to stdout)",
+        "When content_block_start has type 'tool_use', show the tool name being called (e.g. 'Using: Read package.json')",
+        "When input_json_delta arrives, show the tool input being constructed",
+        "Detect completion by checking the 'result' event (type='result') for <promise>COMPLETE</promise> in its result field",
+        "Extract and log total_cost_usd and duration_ms from the result event",
+        "For amp tool, keep current behavior — no changes",
+        "Backward compatible: existing stdout capture for completion detection still works as fallback",
+        "Build passes with npm run build"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Investigation showed: stream-json requires --verbose flag. Events: system (init), stream_event (real-time deltas), assistant (complete message), user (tool results), result (final). Key stream_event.event types: content_block_start (tool_use detection), content_block_delta (text_delta for text, thinking_delta for thinking, input_json_delta for tool input)."
     }
   ]
 }

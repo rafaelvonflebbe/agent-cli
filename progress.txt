@@ -19,3 +19,52 @@ Started: 2026-04-04T00:43:42.213Z
 [2026-04-04T02:05:19.993Z] ALL COMPLETE — Finished at iteration 1/10. Total stories: 7, Completed: 6
 
 [2026-04-04T02:05:19.995Z] ALL COMPLETE — Finished at iteration 1/10. Total stories: 7, Completed: 7
+
+[2026-04-04T02:14:51.032Z] ALL COMPLETE — Finished at iteration 1/10. Total stories: 8, Completed: 7
+
+[2026-04-04T02:14:51.228Z] Story US-008 "Add 'status' command to show completed and pending stories" — File changes:
+  + progress.txt (modified)
+  + src/index.ts (modified)
+  + prd.json (modified)
+
+[2026-04-04T02:14:51.228Z] ALL COMPLETE — Finished at iteration 1/10. Total stories: 8, Completed: 8
+
+[2026-04-04T02:29:25.914Z] Story US-012 "Add --stories flag to control how many stories the agent executes per run" — File changes:
+  + src/core/config.ts (modified)
+  + src/core/iterator.ts (modified)
+  + src/core/types.ts (modified)
+  + src/index.ts (modified)
+
+[2026-04-04T02:29:25.916Z] Iteration 1 — Progress: 9/12 stories complete. Next incomplete story: US-009 "Add JSON schema for prd.json validation" (priority 9)
+
+[2026-04-04T02:34:02.198Z] Story US-009 "Add JSON schema for prd.json validation" — File changes:
+  + package-lock.json (modified)
+  + package.json (modified)
+  + src/core/prd.ts (modified)
+  + prd.schema.json (added)
+
+[2026-04-04T02:34:02.199Z] Iteration 2 — Progress: 10/12 stories complete. Next incomplete story: US-010 "Detect stale branch and clean up prd.json and progress.txt" (priority 10)
+
+[2026-04-04T02:40:39.744Z] ALL COMPLETE — Finished at iteration 3/10. Total stories: 12, Completed: 10
+
+[2026-04-04T02:40:39.958Z] Story US-010 "Detect stale branch and clean up prd.json and progress.txt" — File changes:
+  + src/core/archiver.ts (modified)
+  + src/utils/git-utils.ts (modified)
+
+[2026-04-04T02:40:39.958Z] Iteration 3 — Progress: 11/12 stories complete. Next incomplete story: US-011 "Update agent-cli.md with new features documentation" (priority 11)
+
+[2026-04-04T02:44:44.772Z] ALL COMPLETE — Finished at iteration 4/10. Total stories: 12, Completed: 11
+
+[2026-04-04T02:44:44.976Z] Story US-011 "Update agent-cli.md with new features documentation" — File changes:
+  + agent-cli.md (modified)
+
+[2026-04-04T02:44:44.976Z] ALL COMPLETE — Finished at iteration 4/10. Total stories: 12, Completed: 12
+
+[2026-04-04T02:48:50.717Z] [branch: feat/new_tools] ALL COMPLETE — Finished at iteration 1/5. Total stories: 13, Completed: 12
+
+[2026-04-04T02:48:50.917Z] [branch: feat/new_tools] Story US-013 "Stream real-time claude output during iterations instead of silent waiting" — File changes:
+  + src/core/tool-runner.ts (modified)
+
+[2026-04-04T02:48:50.918Z] [branch: feat/new_tools] ALL COMPLETE — Finished at iteration 1/5. Total stories: 13, Completed: 13
+
+[2026-04-04T02:50:00.728Z] [branch: feat/new_tools] ALL COMPLETE — Finished at iteration 1/2. Total stories: 13, Completed: 13

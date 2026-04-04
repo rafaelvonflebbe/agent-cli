@@ -28,6 +28,7 @@ export function createConfig(options: Partial<AgentConfig> = {}): AgentConfig {
     iterationDelay: options.iterationDelay ?? DEFAULTS.iterationDelay,
     completionSignal: options.completionSignal ?? DEFAULTS.completionSignal,
     dryRun: options.dryRun ?? false,
+    maxStories: options.maxStories,
   };
 }
 
@@ -66,7 +67,7 @@ export function getToolCommand(tool: ToolType): { command: string; args: string[
     case 'claude':
       return {
         command: 'claude',
-        args: ['--dangerously-skip-permissions', '--print'],
+        args: ['--dangerously-skip-permissions', '--output-format', 'stream-json', '--include-partial-messages', '--verbose'],
       };
     default:
       throw new Error(`Unknown tool: ${tool}`);

@@ -55,6 +55,10 @@ export interface ToolResult {
   completed: boolean;
   /** Whether the process was terminated by a signal */
   signal: string | null;
+  /** Total cost in USD (claude stream-json only) */
+  totalCostUsd?: number;
+  /** Duration in milliseconds (claude stream-json only) */
+  durationMs?: number;
 }
 
 /**
@@ -73,6 +77,8 @@ export interface AgentConfig {
   completionSignal: string;
   /** Dry-run mode: simulate iterations without spawning tools */
   dryRun: boolean;
+  /** Maximum number of stories to complete per run (undefined = unlimited) */
+  maxStories?: number;
 }
 
 /**

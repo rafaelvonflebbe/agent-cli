@@ -62,7 +62,7 @@ export class Archiver {
     const archiveInfo = await this.archive(previousBranch);
 
     // Reset progress file for new run
-    await this.resetProgressFile();
+    await this.resetProgressFile(currentBranch);
 
     // Update last branch file
     await this.writeLastBranch(currentBranch);
@@ -128,9 +128,10 @@ export class Archiver {
   /**
    * Reset the progress file for a new run
    */
-  async resetProgressFile(): Promise<void> {
+  async resetProgressFile(branchName?: string): Promise<void> {
     const progressPath = join(this.directory, PROGRESS_FILE);
     const header = `# Agent CLI Progress Log
+Branch: ${branchName || 'unknown'}
 Started: ${new Date().toISOString()}
 ---
 `;
@@ -163,21 +164,21 @@ Started: ${new Date().toISOString()}
   /**
    * Initialize progress file if it doesn't exist
    */
-  async initProgressFile(): Promise<void> {
+  async initProgressFile(branchName?: string): Promise<void> {
     const progressPath = join(this.directory, PROGRESS_FILE);
 
     if (fileExistsSync(progressPath)) {
       return;
     }
 
-    await this.resetProgressFile();
+    await this.resetProgressFile(branchName);
   }
 
   /**
    * Initialize archive system (checks for existing progress file)
    */
   async initialize(currentBranch: string): Promise<void> {
-    await this.initProgressFile();
+    await this.initProgressFile(currentBranch);
     await this.writeLastBranch(currentBranch);
   }
 }
