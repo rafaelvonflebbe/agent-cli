@@ -311,6 +311,23 @@
       "priority": 1,
       "passes": true,
       "notes": "The file is an append-only run log — .log extension is more semantically correct. The backward compat rename keeps existing projects working without manual migration."
+    },
+    {
+      "id": "US-019",
+      "title": "Migrate runtime from Node + tsgo to Bun",
+      "description": "Replace the current build+run pipeline (tsgo compile then node execute) with Bun, which compiles and runs TypeScript natively. This eliminates the separate build step, simplifies the dev workflow, and speeds up execution. Bun is a drop-in Node replacement that supports ESM, TypeScript, and all Node APIs used by agent-cli (child_process, fs, path, etc.).",
+      "acceptanceCriteria": [
+        "Replace npm scripts: dev/start use 'bun run src/index.ts' instead of tsgo build + node dist/index.js",
+        "Remove or demote tsgo and tsc build scripts (keep as fallback with build:old or build:tsc)",
+        "Verify all Node built-in modules used (child_process, fs, path, readline, etc.) work under Bun",
+        "Verify chalk and commander work under Bun",
+        "Update CLAUDE.md Build & Run section to reflect Bun as the primary runtime",
+        "npm run dev still works as the main development command",
+        "Build passes and agent-cli runs correctly with Bun"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "tsgo is only a compiler (TS -> JS), not a runtime. Bun handles both compilation and execution natively, removing the build step entirely."
     }
   ]
 }
