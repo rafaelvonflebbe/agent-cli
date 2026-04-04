@@ -97,6 +97,22 @@
       "priority": 6,
       "passes": true,
       "notes": "Use git status --porcelain to detect changes. Chalk is already a dependency."
+    },
+    {
+      "id": "US-007",
+      "title": "Show changed files report after story completion in CLI and progress.txt",
+      "description": "When a story completes (passes:true), generate a report of all files that were changed during the iterations that worked on that story. Show the report in the CLI output immediately after the completion message, and also append it to progress.txt. This gives the user a clear summary of what was done to complete each story, both on-screen and in the persistent log.",
+      "acceptanceCriteria": [
+        "When a story is detected as completed (passes changed to true), collect all files changed since the story started being worked on",
+        "Display the file changes report in the CLI output right after the story completion message, using chalk colors (green for added/modified, red for removed)",
+        "Append the same file changes report to progress.txt as a section under the story completion entry",
+        "The report in progress.txt should include: story id, story title, list of changed files with their status (added/modified/removed)",
+        "In dry-run mode, skip the report (no actual changes happen)",
+        "Build passes with npm run build"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "This builds on US-006 which tracks per-iteration changes. This story tracks cumulative changes per story across potentially multiple iterations."
     }
   ]
 }

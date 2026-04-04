@@ -11,6 +11,7 @@ import { info, success, error, warn, iterationHeader } from '../utils/logger.js'
 import { appendText } from '../utils/file-utils.js';
 import { captureGitStatus, diffGitStatus, displayFileChanges } from '../utils/git-utils.js';
 import type { FileChange } from '../utils/git-utils.js';
+import chalk from 'chalk';
 import { join } from 'path';
 
 /**
@@ -64,12 +65,24 @@ export class AgentIterator {
       info(`Archived previous run: ${archiveCheck.archive?.featureName}`);
     }
 
+    // Track accumulated file changes per story for completion reports
+    const storyChanges = new Map<string, FileChange[]>();
+
     // Main iteration loop
     for (let i = 1; i <= this.config.maxIterations; i++) {
       this.iterationCount = i;
 
       try {
         let iterationChanges: FileChange[] = [];
+
+        // Save current story passes state to detect completions
+        const passesBefore = new Map<string, boolean>();
+        for (const story of this.prdManager.getPRD().userStories) {
+          passesBefore.set(story.id, story.passes);
+        }
+
+        // Get target story for this iteration
+        const targetStory = this.prdManager.getStatus().nextStory;
 
         // Capture git status before live iterations (skip in dry-run)
         const gitBefore = this.config.dryRun ? null : await captureGitStatus(this.config.directory);
@@ -83,6 +96,32 @@ export class AgentIterator {
         // Reload PRD to get updated status
         await this.prdManager.load();
 
+        // Detect and accumulate file changes (live mode only)
+        if (!this.config.dryRun && gitBefore) {
+          const gitAfter = await captureGitStatus(this.config.directory);
+          iterationChanges = diffGitStatus(gitBefore, gitAfter);
+          displayFileChanges(iterationChanges);
+
+          // Accumulate changes for target story
+          if (targetStory) {
+            const existing = storyChanges.get(targetStory.id) || [];
+            existing.push(...iterationChanges);
+            storyChanges.set(targetStory.id, existing);
+          }
+        }
+
+        // Check for newly completed stories and show reports (live mode only)
+        if (!this.config.dryRun) {
+          const prd = this.prdManager.getPRD();
+          for (const story of prd.userStories) {
+            if (story.passes && !passesBefore.get(story.id)) {
+              const changes = storyChanges.get(story.id) || [];
+              await this.displayStoryReport(story, changes);
+              storyChanges.delete(story.id);
+            }
+          }
+        }
+
         // Check if all stories are complete
         if (this.prdManager.areAllStoriesComplete()) {
           await this.handleComplete();
@@ -92,13 +131,6 @@ export class AgentIterator {
         // Show progress
         const status = this.prdManager.getStatus();
         info(`Iteration ${i} complete. Progress: ${status.completed}/${status.total} stories complete.`);
-
-        // Detect and display file changes (live mode only)
-        if (!this.config.dryRun && gitBefore) {
-          const gitAfter = await captureGitStatus(this.config.directory);
-          iterationChanges = diffGitStatus(gitBefore, gitAfter);
-          displayFileChanges(iterationChanges);
-        }
 
         // Log iteration to progress.txt
         const nextStory = status.nextStory;
@@ -187,6 +219,33 @@ export class AgentIterator {
       `ALL COMPLETE — Finished at iteration ${this.iterationCount}/${this.config.maxIterations}. ` +
       `Total stories: ${finalStatus.total}, Completed: ${finalStatus.completed}`
     );
+  }
+
+  /**
+   * Display and log a story completion report with accumulated file changes
+   */
+  private async displayStoryReport(
+    story: { id: string; title: string },
+    changes: FileChange[]
+  ): Promise<void> {
+    if (changes.length === 0) return;
+
+    // Display on CLI with chalk colors
+    console.log(chalk.cyan(`\n  Story ${story.id} "${story.title}" — File changes:`));
+    for (const change of changes) {
+      if (change.type === 'removed') {
+        console.log(chalk.red(`    - ${change.path} (removed)`));
+      } else {
+        console.log(chalk.green(`    + ${change.path} (${change.type})`));
+      }
+    }
+
+    // Append to progress.txt
+    const lines = [
+      `Story ${story.id} "${story.title}" — File changes:`,
+      ...changes.map(c => `  ${c.type === 'removed' ? '-' : '+'} ${c.path} (${c.type})`),
+    ];
+    await this.logProgress(lines.join('\n'));
   }
 
   /**
