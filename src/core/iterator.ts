@@ -6,6 +6,7 @@ import type { AgentConfig } from './types.js';
 import { createPRDManager, PRDManager } from './prd.js';
 import { createArchiver, Archiver } from './archiver.js';
 import { createToolRunner, ToolRunner } from './tool-runner.js';
+import { createSessionManager, SessionManager } from './session.js';
 import { validateConfig } from './config.js';
 import { info, success, error, warn, iterationHeader } from '../utils/logger.js';
 import { appendText } from '../utils/file-utils.js';
@@ -22,10 +23,12 @@ export class AgentIterator {
   private readonly prdManager: PRDManager;
   private readonly archiver: Archiver;
   private readonly toolRunner: ToolRunner;
+  private readonly sessionManager: SessionManager;
   private readonly progressFilePath: string;
   private iterationCount: number = 0;
   private storiesCompletedThisRun: number = 0;
   private branchName: string = '';
+  private sessionCompletedIds: string[] = [];
 
   constructor(config: AgentConfig) {
     validateConfig(config);
@@ -37,7 +40,8 @@ export class AgentIterator {
       config.tool,
       config.completionSignal
     );
-    this.progressFilePath = join(config.directory, 'progress.txt');
+    this.sessionManager = createSessionManager(config.directory);
+    this.progressFilePath = join(config.directory, 'progress.log');
   }
 
   /**
@@ -75,11 +79,28 @@ export class AgentIterator {
       info(`Archived previous run: ${archiveCheck.archive?.featureName}`);
     }
 
+    // Handle session: create new or resume existing
+    if (this.config.resume) {
+      const sessionExists = await this.sessionManager.exists();
+      if (!sessionExists) {
+        warn('No previous session found. Starting fresh.');
+        await this.sessionManager.create(this.config.tool, this.branchName);
+      } else {
+        const session = await this.sessionManager.load();
+        this.sessionCompletedIds = session.completedStoryIds;
+        this.iterationCount = session.currentIteration;
+        info(`Resuming session: ${this.sessionCompletedIds.length} stories already completed, starting at iteration ${this.iterationCount + 1}`);
+      }
+    } else {
+      await this.sessionManager.create(this.config.tool, this.branchName);
+    }
+
     // Track accumulated file changes per story for completion reports
     const storyChanges = new Map<string, FileChange[]>();
 
-    // Main iteration loop
-    for (let i = 1; i <= this.config.maxIterations; i++) {
+    // Main iteration loop (start from resumed iteration if applicable)
+    const startIteration = this.iterationCount + 1;
+    for (let i = startIteration; i <= this.config.maxIterations; i++) {
       this.iterationCount = i;
 
       try {
@@ -126,6 +147,12 @@ export class AgentIterator {
           for (const story of prd.userStories) {
             if (story.passes && !passesBefore.get(story.id)) {
               this.storiesCompletedThisRun++;
+              this.sessionCompletedIds.push(story.id);
+              await this.sessionManager.update({
+                currentIteration: i,
+                completedStoryIds: [...this.sessionCompletedIds],
+                lastStoryId: story.id,
+              });
               const changes = storyChanges.get(story.id) || [];
               await this.displayStoryReport(story, changes);
               storyChanges.delete(story.id);
@@ -139,6 +166,12 @@ export class AgentIterator {
           for (const story of prd.userStories) {
             if (story.passes && !passesBefore.get(story.id)) {
               this.storiesCompletedThisRun++;
+              this.sessionCompletedIds.push(story.id);
+              await this.sessionManager.update({
+                currentIteration: i,
+                completedStoryIds: [...this.sessionCompletedIds],
+                lastStoryId: story.id,
+              });
             }
           }
         }
@@ -164,7 +197,12 @@ export class AgentIterator {
         const status = this.prdManager.getStatus();
         info(`Iteration ${i} complete. Progress: ${status.completed}/${status.total} stories complete.`);
 
-        // Log iteration to progress.txt
+        // Update session with current iteration (even if no story completed)
+        await this.sessionManager.update({
+          currentIteration: i,
+        });
+
+        // Log iteration to progress.log
         const nextStory = status.nextStory;
         const storyInfo = nextStory
           ? `Next incomplete story: ${nextStory.id} "${nextStory.title}" (priority ${nextStory.priority})`
@@ -188,7 +226,7 @@ export class AgentIterator {
     warn(`Max iterations (${this.config.maxIterations}) reached without completing all tasks.`);
     const finalStatus = this.prdManager.getStatus();
     info(`Final progress: ${finalStatus.completed}/${finalStatus.total} stories complete.`);
-    info('Check progress.txt for details.');
+    info('Check progress.log for details.');
     await this.logProgress(
       `WARNING: Max iterations (${this.config.maxIterations}) reached without completion. ` +
       `Final progress: ${finalStatus.completed}/${finalStatus.total} stories complete.`
@@ -229,7 +267,12 @@ export class AgentIterator {
       return;
     }
 
-    const story = status.nextStory!;
+    const story = status.nextStory;
+    if (!story) {
+      warn(`[DRY-RUN] Iteration ${i}: No eligible story — all remaining stories have unmet dependencies.`);
+      return;
+    }
+
     iterationHeader(i, this.config.maxIterations, this.config.tool, { id: story.id, title: story.title, priority: story.priority });
     info(`[DRY-RUN] Iteration ${i}: Would pick story ${story.id} "${story.title}" (priority ${story.priority})`);
     info(`[DRY-RUN] Iteration ${i}: Would run tool: ${this.config.tool}`);
@@ -250,6 +293,8 @@ export class AgentIterator {
     if (this.config.maxStories) {
       info(`Stories completed this run: ${this.storiesCompletedThisRun}/${this.config.maxStories}`);
     }
+    // Delete session file on clean exit
+    await this.sessionManager.delete();
     await this.logProgress(
       `ALL COMPLETE — Finished at iteration ${this.iterationCount}/${this.config.maxIterations}. ` +
       `Total stories: ${finalStatus.total}, Completed: ${finalStatus.completed}` +
@@ -272,7 +317,7 @@ export class AgentIterator {
     // Clear branchName in prd.json
     await this.prdManager.updateBranchName('');
 
-    // Log to progress.txt
+    // Log to progress.log
     await this.logProgress(
       `STALE BRANCH: Branch '${branchName}' no longer exists. ` +
       `Cleared branchName in prd.json and archived the run. Stopping loop.`
@@ -300,7 +345,7 @@ export class AgentIterator {
       }
     }
 
-    // Append to progress.txt
+    // Append to progress.log
     const lines = [
       `Story ${story.id} "${story.title}" — File changes:`,
       ...changes.map(c => `  ${c.type === 'removed' ? '-' : '+'} ${c.path} (${c.type})`),
@@ -309,7 +354,7 @@ export class AgentIterator {
   }
 
   /**
-   * Append a timestamped entry to progress.txt
+   * Append a timestamped entry to progress.log
    */
   private async logProgress(message: string): Promise<void> {
     const timestamp = new Date().toISOString();
@@ -318,7 +363,7 @@ export class AgentIterator {
     try {
       await appendText(this.progressFilePath, entry);
     } catch {
-      warn('Failed to write to progress.txt');
+      warn('Failed to write to progress.log');
     }
   }
 

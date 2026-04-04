@@ -1,85 +1,187 @@
 /**
- * Tool Runner - executes external AI CLI tools (amp/claude)
+ * Tool Runner - executes registered AI CLI tools
  */
 
 import { spawn } from 'child_process';
 import { createReadStream } from 'fs';
 import type { ToolResult, ToolType } from './types.js';
-import { getToolCommand, getPromptFile } from './config.js';
+import { getToolCommand, getPromptFile, getToolConfig } from './config.js';
 import { join } from 'path';
 import { info, error, iterationHeader } from '../utils/logger.js';
 import { fileExistsSync } from '../utils/file-utils.js';
 import chalk from 'chalk';
 
 /**
- * Parse a single stream-json event line and display relevant output
+ * Format tool input into a human-readable summary instead of raw JSON.
+ * Shows the most relevant parameter for each tool type.
  */
-function handleStreamEvent(line: string): { completed: boolean; cost?: number; duration?: number } {
-  let completed = false;
-  let cost: number | undefined;
-  let duration: number | undefined;
+/**
+ * Shorten a file path to show only from the project directory name onward.
+ * e.g. "/Users/rafaelvonflebbe/genai-projects/agent-cli/src/index.ts" → "agent-cli/src/index.ts"
+ */
+function shortenPath(filePath: string): string {
+  const cwd = process.cwd();
+  const sep = cwd.includes('/') ? '/' : '\\';
+  // Get the project folder name (last segment of cwd)
+  const projectFolder = cwd.split(sep).pop() || '';
+  const idx = filePath.indexOf(sep + projectFolder + sep);
+  if (idx !== -1) {
+    return filePath.slice(idx + 1);
+  }
+  // Fallback: if it's under cwd, show relative path
+  if (filePath.startsWith(cwd + sep)) {
+    return filePath.slice(cwd.length + 1);
+  }
+  return filePath;
+}
 
-  let event: Record<string, unknown>;
-  try {
-    event = JSON.parse(line);
-  } catch {
-    // Not JSON — ignore
-    return { completed: false };
+/**
+ * Format tool input into a human-readable summary instead of raw JSON.
+ * Shows the most relevant parameter for each tool type.
+ */
+function formatToolInput(_toolName: string, input: Record<string, unknown>): string {
+  // Tools that operate on files — show the file path (shortened)
+  if ('file_path' in input) {
+    return ` ${shortenPath(String(input.file_path))}`;
   }
 
-  const eventType = event.type as string | undefined;
+  // Tools that search — show the pattern/query
+  if ('pattern' in input) {
+    return ` "${input.pattern}"`;
+  }
+  if ('query' in input) {
+    return ` "${input.query}"`;
+  }
 
-  if (eventType === 'stream_event') {
-    const streamEvent = event.event as Record<string, unknown> | undefined;
-    if (!streamEvent) return { completed: false };
+  // Agent tool — show description
+  if ('description' in input && typeof input.description === 'string') {
+    return ` — ${input.description}`;
+  }
 
-    const seType = streamEvent.type as string | undefined;
+  // Task/TodoWrite — show subject or count
+  if ('subject' in input) {
+    return ` ${input.subject}`;
+  }
+  if ('todos' in input && Array.isArray(input.todos)) {
+    return ` (${input.todos.length} items)`;
+  }
 
-    if (seType === 'content_block_start') {
-      const contentBlock = streamEvent.content_block as Record<string, unknown> | undefined;
-      if (contentBlock?.type === 'tool_use') {
-        const toolName = contentBlock.name as string | undefined;
-        if (toolName) {
+  // Bash — show the command
+  if ('command' in input) {
+    const cmd = String(input.command);
+    const preview = cmd.length > 80 ? cmd.slice(0, 77) + '...' : cmd;
+    return ` ${preview}`;
+  }
+
+  // Notebook edit
+  if ('notebook_path' in input) {
+    return ` ${shortenPath(String(input.notebook_path))}`;
+  }
+
+  // Fallback — show first string value (shorten if it looks like a path)
+  const firstVal = Object.values(input).find(v => typeof v === 'string' && v.length > 0);
+  if (firstVal) {
+    let preview = String(firstVal);
+    if (preview.startsWith('/')) preview = shortenPath(preview);
+    if (preview.length > 60) preview = preview.slice(0, 57) + '...';
+    return ` ${preview}`;
+  }
+
+  return '';
+}
+
+/**
+ * Parse a single stream-json event line and display relevant output.
+ * Accumulates input_json_delta fragments and displays a formatted summary
+ * when the content block ends (content_block_stop), so tool args like
+ * file_path are available even when they arrive incrementally.
+ */
+function createStreamEventHandler() {
+  let currentToolName: string | null = null;
+  let inputJsonBuffer = '';
+
+  return function handleStreamEvent(line: string): { completed: boolean; cost?: number; duration?: number } {
+    let completed = false;
+    let cost: number | undefined;
+    let duration: number | undefined;
+
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      return { completed: false };
+    }
+
+    const eventType = event.type as string | undefined;
+
+    if (eventType === 'stream_event') {
+      const streamEvent = event.event as Record<string, unknown> | undefined;
+      if (!streamEvent) return { completed: false };
+
+      const seType = streamEvent.type as string | undefined;
+
+      if (seType === 'content_block_start') {
+        const contentBlock = streamEvent.content_block as Record<string, unknown> | undefined;
+        if (contentBlock?.type === 'tool_use') {
+          currentToolName = (contentBlock.name as string) || null;
+          inputJsonBuffer = '';
+          // If input already has content (rare but possible), use it
           const input = contentBlock.input as Record<string, unknown> | undefined;
-          const detail = input && Object.keys(input).length > 0
-            ? ` ${JSON.stringify(input)}`
-            : '';
-          process.stdout.write(chalk.magenta(`  Using: ${toolName}${detail}\n`));
+          if (input && Object.keys(input).length > 0) {
+            inputJsonBuffer = JSON.stringify(input);
+          }
         }
-      }
-    } else if (seType === 'content_block_delta') {
-      const delta = streamEvent.delta as Record<string, unknown> | undefined;
-      if (!delta) return { completed: false };
-      const deltaType = delta.type as string | undefined;
+      } else if (seType === 'content_block_delta') {
+        const delta = streamEvent.delta as Record<string, unknown> | undefined;
+        if (!delta) return { completed: false };
+        const deltaType = delta.type as string | undefined;
 
-      if (deltaType === 'text_delta') {
-        const text = delta.text as string | undefined;
-        if (text) {
-          process.stdout.write(text);
+        if (deltaType === 'text_delta') {
+          const text = delta.text as string | undefined;
+          if (text) {
+            process.stdout.write(text);
+          }
+        } else if (deltaType === 'input_json_delta') {
+          // Accumulate JSON fragments silently
+          const partialJson = delta.partial_json as string | undefined;
+          if (partialJson) {
+            inputJsonBuffer += partialJson;
+          }
         }
-      } else if (deltaType === 'input_json_delta') {
-        const partialJson = delta.partial_json as string | undefined;
-        if (partialJson) {
-          process.stdout.write(chalk.gray(partialJson));
+      } else if (seType === 'content_block_stop') {
+        // Tool input is complete — parse and display formatted summary
+        if (currentToolName) {
+          let input: Record<string, unknown> | undefined;
+          try {
+            if (inputJsonBuffer) {
+              input = JSON.parse(inputJsonBuffer);
+            }
+          } catch {
+            // Malformed JSON — skip detail
+          }
+          const detail = input ? formatToolInput(currentToolName, input) : '';
+          process.stdout.write(chalk.magenta(`  Using: ${currentToolName}${detail}\n`));
+          currentToolName = null;
+          inputJsonBuffer = '';
         }
       }
       // thinking_delta is intentionally not displayed to reduce noise
-    }
-  } else if (eventType === 'result') {
-    const resultText = event.result as string | undefined;
-    if (resultText?.includes('<promise>COMPLETE</promise>')) {
-      completed = true;
+    } else if (eventType === 'result') {
+      const resultText = event.result as string | undefined;
+      if (resultText?.includes('<promise>COMPLETE</promise>')) {
+        completed = true;
+      }
+
+      if (event.total_cost_usd !== undefined) {
+        cost = Number(event.total_cost_usd);
+      }
+      if (event.duration_ms !== undefined) {
+        duration = Number(event.duration_ms);
+      }
     }
 
-    if (event.total_cost_usd !== undefined) {
-      cost = Number(event.total_cost_usd);
-    }
-    if (event.duration_ms !== undefined) {
-      duration = Number(event.duration_ms);
-    }
-  }
-
-  return { completed, cost, duration };
+    return { completed, cost, duration };
+  };
 }
 
 /**
@@ -110,6 +212,8 @@ export class ToolRunner {
     }
 
     const { command, args } = getToolCommand(this.tool);
+    const toolConfig = getToolConfig(this.tool);
+    const usesStreamJson = toolConfig.args.includes('stream-json');
 
     info(`Running: ${command} ${args.join(' ')} < ${getPromptFile(this.tool)}`);
 
@@ -131,8 +235,9 @@ export class ToolRunner {
     let totalCostUsd: number | undefined;
     let durationMs: number | undefined;
 
-    if (this.tool === 'claude') {
+    if (usesStreamJson) {
       // Parse stream-json events line-by-line
+      const handleStreamEvent = createStreamEventHandler();
       let lineBuffer = '';
       proc.stdout?.on('data', (data) => {
         const chunk = data.toString();
@@ -154,7 +259,7 @@ export class ToolRunner {
         }
       });
     } else {
-      // amp: stream stdout raw to console and capture
+      // Fallback: stream stdout raw to console and capture
       proc.stdout?.on('data', (data) => {
         const chunk = data.toString();
         stdout += chunk;

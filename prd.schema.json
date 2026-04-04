@@ -65,6 +65,14 @@
           "notes": {
             "type": "string",
             "description": "Additional notes or context"
+          },
+          "dependsOn": {
+            "type": "array",
+            "description": "Story IDs this story depends on (all must have passes: true before this story is eligible)",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       }

@@ -30,25 +30,25 @@ You are an autonomous development agent. Your job is to implement user stories f
 
 ## Architecture
 
-Agent CLI is an autonomous loop that drives an AI tool (amp or claude) to iteratively implement user stories defined in a PRD.
+Agent CLI is an autonomous loop that drives an AI tool (claude, openclaude, or any registered tool) to iteratively implement user stories defined in a PRD.
 
 **Entry point:** `src/index.ts` — CLI powered by `commander`. Parses `[max_iterations]`, `--tool`, `--directory`, `--dry-run`, `--init`, `--stories` flags. Validates that `prd.json` exists, then calls `runAgent()`. Also provides a `status` subcommand.
 
 **Core loop flow (`src/core/iterator.ts`):**
 1. Load `prd.json` via `PRDManager` (validates against schema)
-2. Initialize archive system (creates `progress.txt` if missing)
+2. Initialize archive system (creates `progress.log` if missing)
 3. Check if branch still exists — if stale, archive run, clear branchName, and stop
 4. Check if branch changed — if so, archive previous run
 5. Iterate up to `maxIterations`: spawn the AI tool, stream its prompt file to stdin, capture stdout to detect `<promise>COMPLETE</promise>` signal
-6. After each iteration: reload PRD, log progress to `progress.txt`, detect file changes, check for story completions
+6. After each iteration: reload PRD, log progress to `progress.log`, detect file changes, check for story completions
 7. Respect `--stories` limit if set — stop after N stories completed in this run
 
 **Key modules:**
-- `src/core/tool-runner.ts` — Spawns `amp` or `claude` as child processes. Pipes the prompt file (`agent-cli.md` for claude, `prompt.md` for amp) to stdin. Detects completion by scanning stdout for the signal string. In `--dry-run` mode, this module is bypassed entirely.
+- `src/core/tool-runner.ts` — Spawns registered AI tools as child processes. Pipes the prompt file to stdin. Detects completion by scanning stdout for the signal string. In `--dry-run` mode, this module is bypassed entirely.
 - `src/core/prd.ts` — `PRDManager` class: load/save/validate `prd.json` against JSON schema, track story completion, find next incomplete story by priority (lower number = higher priority). Schema validation uses Ajv with `prd.schema.json`.
-- `src/core/archiver.ts` — When `branchName` in PRD changes, archives previous `prd.json` + `progress.txt` to `archive/YYYY-MM-DD-feature-name/`. Tracks last branch in `.last-branch`. Creates and resets `progress.txt` with headers including branch name and timestamp.
-- `src/core/config.ts` — Defaults (tool: `amp`, maxIterations: `10`, delay: `2000ms`), validation, and tool command/args mapping.
-- `src/core/init.ts` — `--init` command: copies `agent-cli.md`, creates `progress.txt` header, and optionally creates a template `prd.json` in the target directory. Skips `prd.json` if it already exists.
+- `src/core/archiver.ts` — When `branchName` in PRD changes, archives previous `prd.json` + `progress.log` to `archive/YYYY-MM-DD-feature-name/`. Tracks last branch in `.last-branch`. Creates and resets `progress.log` with headers including branch name and timestamp.
+- `src/core/config.ts` — Tool registry, defaults (tool: `claude`, maxIterations: `10`, delay: `2000ms`), validation, and tool command/args mapping. Tools are registered in a `TOOL_REGISTRY` map — add new tools by adding entries.
+- `src/core/init.ts` — `--init` command: copies `agent-cli.md`, creates `progress.log` header, and optionally creates a template `prd.json` in the target directory. Skips `prd.json` if it already exists.
 - `src/core/types.ts` — All TypeScript interfaces: `PRD`, `UserStory`, `AgentConfig`, `ToolResult`, `ArchiveInfo`, `PRDStatus`, etc.
 - `src/utils/git-utils.ts` — Git utilities: `captureGitStatus()` captures `git status --porcelain`, `diffGitStatus()` compares two snapshots to detect added/modified/removed files, `branchExists()` checks if a branch exists locally, `displayFileChanges()` renders changes with chalk colors.
 - `src/utils/file-utils.ts` — JSON/text file I/O helpers.
@@ -64,10 +64,10 @@ agent-cli [max_iterations] [options]
 ```
 
 **Options:**
-- `--tool <amp|claude>` — AI tool to use (default: `amp`)
+- `--tool <tool>` — AI tool to use (default: `claude`). Available tools: `claude`, `openclaude`. Add new tools via the tool registry in `src/core/config.ts`.
 - `--directory <path>` — Working directory containing `prd.json` (default: cwd)
 - `--dry-run` — Simulate iterations without spawning tools. Logs which story would be picked, which tool would run, and simulates completing one story per iteration.
-- `--init` — Bootstrap agent-cli files (`agent-cli.md`, `progress.txt`, template `prd.json`) in the target directory and exit. Does not start the agent loop. Skips `prd.json` if it already exists.
+- `--init` — Bootstrap agent-cli files (`agent-cli.md`, `progress.log`, template `prd.json`) in the target directory and exit. Does not start the agent loop. Skips `prd.json` if it already exists.
 - `--stories <number>` — Maximum number of stories to complete per run. Stops the loop after N stories are completed in this run, even if more remain. Respects `max_iterations` as the hard upper bound.
 
 ### Status subcommand
@@ -81,7 +81,7 @@ Reads `prd.json` and displays: total stories, completed count, pending count, an
 At the start of each run, the iterator checks if the `branchName` in `prd.json` still exists as a local git branch (`git branch --list`). If the branch no longer exists (was merged and deleted, or manually removed), the loop:
 
 1. Archives the run under the stale branch name
-2. Initializes `progress.txt` and logs which branch was stale
+2. Initializes `progress.log` and logs which branch was stale
 3. Clears `branchName` in `prd.json` (sets to empty string)
 4. Stops the loop with a warning
 
@@ -89,11 +89,11 @@ This prevents the agent from running on a ghost branch. The user must update `pr
 
 ## Progress Logging
 
-Every iteration writes a timestamped entry to `progress.txt` with the iteration number, targeted story id/title, and completion status. Entries include the active branch name. When all stories complete, a final summary entry is appended. If max iterations are reached without completion, a warning entry is appended.
+Every iteration writes a timestamped entry to `progress.log` with the iteration number, targeted story id/title, and completion status. Entries include the active branch name. When all stories complete, a final summary entry is appended. If max iterations are reached without completion, a warning entry is appended.
 
 ## File Change Tracking
 
-In live mode (not dry-run), the iterator captures `git status --porcelain` before and after each iteration to detect file changes (added, modified, removed). Changes are displayed with colored prefixes. When a story is detected as completed, a cumulative file changes report is shown in the CLI and appended to `progress.txt`.
+In live mode (not dry-run), the iterator captures `git status --porcelain` before and after each iteration to detect file changes (added, modified, removed). Changes are displayed with colored prefixes. When a story is detected as completed, a cumulative file changes report is shown in the CLI and appended to `progress.log`.
 
 ## PRD Schema Validation
 

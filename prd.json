@@ -234,6 +234,83 @@
       "priority": 1,
       "passes": true,
       "notes": "Replaced plain-text output with formatted table using chalk. Shows all stories sorted by completion status then priority, with summary row."
+    },
+    {
+      "id": "US-015",
+      "title": "Task Dependency Graph for User Stories",
+      "description": "Add optional dependency tracking to user stories so that stories with unmet dependencies are skipped and only become eligible once their blockers are completed. This enables intelligent execution ordering where independent stories can run in any order but dependent stories wait for their prerequisites. The PRD manager's getNextStory() method already picks the highest-priority incomplete story — this enhancement adds a dependency filter on top of that logic.",
+      "acceptanceCriteria": [
+        "UserStory interface in types.ts includes optional 'dependsOn: string[]' field (array of story IDs this story depends on)",
+        "prd.schema.json updated to accept optional 'dependsOn' array of strings alongside existing fields",
+        "PRDManager.getNextStory() respects dependencies — only returns stories whose dependsOn IDs all have passes: true",
+        "Stories with unmet dependencies are skipped during iteration and the next eligible story is selected",
+        "Stories without dependsOn behave exactly as before (backward compatible — no migration needed)",
+        "The 'status' CLI command shows dependency info for each story (e.g., 'blocked by: US-017')",
+        "On PRD load, validate that all dependsOn IDs reference existing story IDs — warn but don't crash on invalid references",
+        "Build passes with npm run build"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Added dependsOn optional field to UserStory, schema, and PRDManager. getNextStory() respects dependencies. Status command shows blocked-by info. Backward compatible."
+    },
+    {
+      "id": "US-016",
+      "title": "Multi-Provider Support with Tool Registry",
+      "description": "Refactor the tool system to use a registry pattern that makes it trivial to add new AI CLI tools. Remove amp as a supported tool (no longer used). Add openclaude as a first-class provider alongside claude (which becomes the default). The registry maps tool names to their configuration (command, args, promptFile), eliminating the need to modify config.ts when adding new providers.",
+      "acceptanceCriteria": [
+        "Replace the ToolType union ('amp' | 'claude') with a string type to allow arbitrary tool names",
+        "Create a tool registry (object or Map) that maps tool names to { command, args, promptFile } config objects",
+        "Remove all amp-specific code: tool-runner amp branch, getToolCommand amp case, getPromptFile amp case",
+        "Change default tool from 'amp' to 'claude' in config.ts",
+        "Built-in tools (claude, openclaude) are pre-registered as defaults",
+        "openclaude is registered with command 'openclaude' and appropriate args for non-interactive execution",
+        "getToolCommand() and getPromptFile() work via registry lookup instead of switch statements",
+        "validateConfig() accepts any tool name that exists in the registry",
+        "--tool flag accepts any registered tool name",
+        "If a tool name is not in the registry, show a clear error listing available tools",
+        "Update agent-cli.md to remove amp references and document claude as default + openclaude as alternative",
+        "Build passes with npm run build"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Inspired by OpenClaude's multi-provider architecture and claudecode's tool registry pattern. Medium effort — refactoring config.ts + types.ts."
+    },
+    {
+      "id": "US-017",
+      "title": "Session Resume — Save and Restore Iterator State",
+      "description": "When the agent loop is interrupted (Ctrl+C, crash, timeout), save its state to a .session.json file so the user can resume from where they left off. This prevents losing progress on long-running PRD implementations with many stories. The session file tracks which iteration was running, which stories were completed in this run, and when the session was last updated.",
+      "acceptanceCriteria": [
+        "Create a .session.json file at the start of each run with fields: currentIteration, completedStoryIds (array), lastStoryId, timestamp, tool, branchName",
+        "Update .session.json after each story completion (not just at the end of the run)",
+        "Add a --resume flag to the CLI that checks for .session.json and restores state from it",
+        "On resume, skip stories that were already completed in the previous session — start from the next incomplete story",
+        "If .session.json exists and user runs without --resume, show a prompt: 'Previous session found (X stories completed). Resume? [Y/n]'",
+        "Delete .session.json when all stories complete successfully (clean exit)",
+        "Add .session.json to .gitignore",
+        "Dry-run mode also supports session save/resume",
+        "Build passes with npm run build"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Inspired by claudecode's session persistence pattern. Simple file-based approach that fits agent-cli's architecture. Depends on US-015 for dependency-aware resume."
+    },
+    {
+      "id": "US-018",
+      "title": "Rename progress.txt to progress.log with backward compatibility",
+      "description": "Rename the progress tracking file from progress.txt to progress.log to better reflect its nature as an append-only log file. Maintain full backward compatibility: if progress.txt exists but progress.log doesn't, rename it automatically. All references across the codebase (archiver, iterator, init, status, docs) must be updated.",
+      "acceptanceCriteria": [
+        "All code references to 'progress.txt' are changed to 'progress.log'",
+        "On startup, if progress.txt exists and progress.log doesn't, automatically rename progress.txt to progress.log and log the migration",
+        "If both files exist, use progress.log and ignore progress.txt (don't crash)",
+        "The --init command creates progress.log instead of progress.txt",
+        "The archive system archives progress.log (not progress.txt)",
+        "progress.log is added to .gitignore (replace progress.txt entry if present)",
+        "Update agent-cli.md and CLAUDE.md to reference progress.log instead of progress.txt",
+        "Build passes with npm run build"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "The file is an append-only run log — .log extension is more semantically correct. The backward compat rename keeps existing projects working without manual migration."
     }
   ]
 }

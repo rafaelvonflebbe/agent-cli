@@ -2,15 +2,32 @@
  * Configuration management for Agent CLI
  */
 
-import type { AgentConfig, ToolType } from './types.js';
+import type { AgentConfig, ToolType, ToolConfig } from './types.js';
 
-export type { ToolType } from './types.js';
+export type { ToolType, ToolConfig } from './types.js';
+
+/**
+ * Built-in tool registry: maps tool names to their configuration.
+ * Add new tools by adding entries here.
+ */
+const TOOL_REGISTRY: Record<string, ToolConfig> = {
+  claude: {
+    command: 'claude',
+    args: ['--dangerously-skip-permissions', '--output-format', 'stream-json', '--include-partial-messages', '--verbose'],
+    promptFile: 'agent-cli.md',
+  },
+  openclaude: {
+    command: 'openclaude',
+    args: ['--dangerously-skip-permissions', '--output-format', 'stream-json', '--include-partial-messages', '--verbose'],
+    promptFile: 'agent-cli.md',
+  },
+};
 
 /**
  * Default configuration values
  */
 const DEFAULTS = {
-  tool: 'amp' as ToolType,
+  tool: 'claude' as ToolType,
   maxIterations: 10,
   iterationDelay: 2000,
   completionSignal: '<promise>COMPLETE</promise>',
@@ -29,6 +46,7 @@ export function createConfig(options: Partial<AgentConfig> = {}): AgentConfig {
     completionSignal: options.completionSignal ?? DEFAULTS.completionSignal,
     dryRun: options.dryRun ?? false,
     maxStories: options.maxStories,
+    resume: options.resume,
   };
 }
 
@@ -37,8 +55,10 @@ export function createConfig(options: Partial<AgentConfig> = {}): AgentConfig {
  * @throws Error if configuration is invalid
  */
 export function validateConfig(config: AgentConfig): void {
-  if (!['amp', 'claude'].includes(config.tool)) {
-    throw new Error(`Invalid tool: ${config.tool}. Must be 'amp' or 'claude'`);
+  if (!isToolRegistered(config.tool)) {
+    throw new Error(
+      `Unknown tool: '${config.tool}'. Available tools: ${getAvailableToolNames().join(', ')}`
+    );
   }
 
   if (config.maxIterations < 1) {
@@ -55,30 +75,47 @@ export function validateConfig(config: AgentConfig): void {
 }
 
 /**
+ * Check if a tool name is registered
+ */
+export function isToolRegistered(tool: string): boolean {
+  return tool in TOOL_REGISTRY;
+}
+
+/**
+ * Get the list of available (registered) tool names
+ */
+export function getAvailableToolNames(): string[] {
+  return Object.keys(TOOL_REGISTRY);
+}
+
+/**
+ * Get the configuration for a registered tool
+ * @throws Error if the tool is not registered
+ */
+export function getToolConfig(tool: string): ToolConfig {
+  const config = TOOL_REGISTRY[tool];
+  if (!config) {
+    throw new Error(
+      `Unknown tool: '${tool}'. Available tools: ${getAvailableToolNames().join(', ')}`
+    );
+  }
+  return config;
+}
+
+/**
  * Get the command and arguments for a specific tool
  */
-export function getToolCommand(tool: ToolType): { command: string; args: string[] } {
-  switch (tool) {
-    case 'amp':
-      return {
-        command: 'amp',
-        args: ['--dangerously-allow-all'],
-      };
-    case 'claude':
-      return {
-        command: 'claude',
-        args: ['--dangerously-skip-permissions', '--output-format', 'stream-json', '--include-partial-messages', '--verbose'],
-      };
-    default:
-      throw new Error(`Unknown tool: ${tool}`);
-  }
+export function getToolCommand(tool: string): { command: string; args: string[] } {
+  const config = getToolConfig(tool);
+  return { command: config.command, args: [...config.args] };
 }
 
 /**
  * Get the prompt file name for a specific tool
  */
-export function getPromptFile(tool: ToolType): string {
-  return tool === 'amp' ? 'prompt.md' : 'agent-cli.md';
+export function getPromptFile(tool: string): string {
+  const config = getToolConfig(tool);
+  return config.promptFile;
 }
 
 /**

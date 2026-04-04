@@ -5,7 +5,7 @@
 import type { PRD, UserStory, PRDStatus } from './types.js';
 import { readJSON, writeJSON, fileExistsSync } from '../utils/file-utils.js';
 import { join, dirname } from 'path';
-import { error } from '../utils/logger.js';
+import { error, warn } from '../utils/logger.js';
 import Ajv from 'ajv';
 
 /** Default PRD file name */
@@ -59,6 +59,7 @@ export class PRDManager {
     try {
       this.prd = await readJSON<PRD>(this.path);
       await this.validateWithSchema(this.prd);
+      this.validateDependencies(this.prd);
       return this.prd;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -79,6 +80,34 @@ export class PRDManager {
   }
 
   /**
+   * Check if a story's dependencies are all met
+   */
+  private areDependenciesMet(story: UserStory): boolean {
+    if (!story.dependsOn || story.dependsOn.length === 0) {
+      return true;
+    }
+    const prd = this.getPRD();
+    return story.dependsOn.every(depId => {
+      const dep = prd.userStories.find(s => s.id === depId);
+      return dep?.passes === true;
+    });
+  }
+
+  /**
+   * Get unmet dependencies for a story
+   */
+  getUnmetDependencies(story: UserStory): string[] {
+    if (!story.dependsOn || story.dependsOn.length === 0) {
+      return [];
+    }
+    const prd = this.getPRD();
+    return story.dependsOn.filter(depId => {
+      const dep = prd.userStories.find(s => s.id === depId);
+      return !dep || !dep.passes;
+    });
+  }
+
+  /**
    * Get PRD status
    */
   getStatus(): PRDStatus {
@@ -88,9 +117,9 @@ export class PRDManager {
     const incomplete = total - completed;
     const allComplete = incomplete === 0;
 
-    // Find highest priority incomplete story (lowest priority number = highest priority)
-    const incompleteStories = prd.userStories
-      .filter(s => !s.passes)
+    // Find highest priority incomplete story whose dependencies are met
+    const eligibleStories = prd.userStories
+      .filter(s => !s.passes && this.areDependenciesMet(s))
       .sort((a, b) => a.priority - b.priority);
 
     return {
@@ -98,7 +127,7 @@ export class PRDManager {
       completed,
       incomplete,
       allComplete,
-      nextStory: incompleteStories[0],
+      nextStory: eligibleStories[0],
     };
   }
 
@@ -170,6 +199,23 @@ export class PRDManager {
         return field ? `${field} ${e.message}` : e.message;
       }).join('; ');
       throw new Error(`PRD validation failed: ${errors}`);
+    }
+  }
+
+  /**
+   * Validate that all dependsOn IDs reference existing story IDs
+   * Warns but does not crash on invalid references
+   */
+  private validateDependencies(prd: PRD): void {
+    const storyIds = new Set(prd.userStories.map(s => s.id));
+    for (const story of prd.userStories) {
+      if (story.dependsOn) {
+        for (const depId of story.dependsOn) {
+          if (!storyIds.has(depId)) {
+            warn(`Story ${story.id} depends on ${depId}, but no story with that ID exists`);
+          }
+        }
+      }
     }
   }
 

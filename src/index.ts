@@ -4,10 +4,11 @@
  */
 
 import { Command } from 'commander';
-import { createConfig, type ToolType } from './core/config.js';
+import { createConfig, isToolRegistered, getAvailableToolNames, type ToolType } from './core/config.js';
 import { runAgent } from './core/iterator.js';
 import { runInit } from './core/init.js';
-import { error, success, info } from './utils/logger.js';
+import { createSessionManager } from './core/session.js';
+import { error, success, info, warn } from './utils/logger.js';
 import { fileExistsSync } from './utils/file-utils.js';
 import { join } from 'path';
 import { readFileSync } from 'fs';
@@ -33,12 +34,13 @@ program
 
 program
   .argument('[max_iterations]', 'Maximum number of iterations', '10')
-  .option('--tool <amp|claude>', 'AI tool to use', 'amp')
+  .option('--tool <tool>', 'AI tool to use (registered tools: use "list" to see available)', 'claude')
   .option('--directory <path>', 'Working directory containing prd.json', process.cwd())
   .option('--dry-run', 'Simulate iterations without spawning tools')
   .option('--init', 'Bootstrap agent-cli files in the target directory and exit')
   .option('--stories <number>', 'Maximum number of stories to complete per run')
-  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; stories?: string }) => {
+  .option('--resume', 'Resume from a previous interrupted session')
+  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; stories?: string; resume?: boolean }) => {
     try {
       // Handle --init mode
       if (options.init) {
@@ -53,9 +55,9 @@ program
         process.exit(1);
       }
 
-      // Validate tool
-      if (!['amp', 'claude'].includes(options.tool)) {
-        error(`Invalid tool: ${options.tool}. Must be 'amp' or 'claude'`);
+      // Validate tool against registry
+      if (!isToolRegistered(options.tool)) {
+        error(`Unknown tool: '${options.tool}'. Available tools: ${getAvailableToolNames().join(', ')}`);
         process.exit(1);
       }
 
@@ -89,7 +91,18 @@ program
         maxIterations,
         dryRun: options.dryRun,
         maxStories,
+        resume: options.resume,
       });
+
+      // Check for existing session
+      const sessionManager = createSessionManager(options.directory);
+      const sessionExists = await sessionManager.exists();
+
+      if (sessionExists && !options.resume) {
+        const session = await sessionManager.load();
+        const count = session.completedStoryIds.length;
+        warn(`Previous session found (${count} stories completed). Use --resume to continue from where you left off.`);
+      }
 
       // Run the agent
       await runAgent(config);
@@ -159,6 +172,14 @@ statusCommand
           : story.title.padEnd(colTitle);
         const criteria = `${story.acceptanceCriteria.length} criteria`.padEnd(colCriteria);
         console.log(`${icon}  ${id} ${pri} ${title} ${criteria}`);
+
+        // Show blocked-by info for pending stories with unmet dependencies
+        if (!story.passes && story.dependsOn && story.dependsOn.length > 0) {
+          const unmet = manager.getUnmetDependencies(story);
+          if (unmet.length > 0) {
+            console.log(chalk.gray(`     blocked by: ${unmet.join(', ')}`));
+          }
+        }
       }
 
       console.log(chalk.gray(separator));
