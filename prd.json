@@ -54,6 +54,264 @@
       "priority": 2,
       "passes": true,
       "notes": "The archiver still archives via handleStaleBranch() in iterator.ts, so removing .last-branch doesn't break the archiving use case. The branch comparison in checkAndArchive was dead logic."
+    },
+    {
+      "id": "US-022",
+      "title": "Translate README.md to English",
+      "description": "The current README.md is partially or fully in Portuguese. Translate all content to English so the project is accessible to a broader audience.",
+      "acceptanceCriteria": [
+        "All text in README.md is in English",
+        "Technical terms, code examples, and project structure remain accurate",
+        "No content is lost or changed in meaning during translation",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "Create architecture documentation with ASCII art and Mermaid diagrams",
+      "description": "Generate visual architecture docs for agent-cli. Create an ASCII art diagram in .tmp/architecture.md showing the main loop flow, module relationships, and data flow between components. Also create .tmp/architecture-mermaid.md with Mermaid versions of the same diagrams. Include suggestions for other useful views (e.g., session lifecycle, archiving flow, PRD state machine) as separate sections or files.",
+      "acceptanceCriteria": [
+        ".tmp/architecture.md contains ASCII art diagrams of the core loop and module relationships",
+        ".tmp/architecture-mermaid.md contains equivalent Mermaid diagrams",
+        "Diagrams cover: main loop flow (iterator), tool spawning, PRD state transitions, archiving flow, session management",
+        "Additional suggested views are documented (e.g., error handling flow, git status tracking)",
+        ".tmp directory is gitignored and does not appear in version control",
+        "npm run build passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "The .tmp/ directory is for local-only documentation that helps developers visualize the system. Not meant to be committed."
+    },
+    {
+      "id": "US-024",
+      "title": "Add global .watch.json config for monitored directories",
+      "description": "Create a global config file at ~/.agent-cli/.watch.json that lists directories to monitor. This allows the monitor subcommand (US-025) to know which projects to track. Provide a way to add/remove directories via CLI flags.",
+      "acceptanceCriteria": [
+        "Global config stored at ~/.agent-cli/.watch.json with { directories: string[] } format",
+        "~/.agent-cli/ directory is auto-created if it doesn't exist",
+        "Add directory via --add <path> flag (resolves to absolute path)",
+        "Remove directory via --remove <path> flag",
+        "Add types WatchConfig and ProjectStatus to types.ts",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "This is the data foundation for the monitor dashboard. Keep it simple — just a JSON array of absolute paths. BullMQ will replace file-based state later."
+    },
+    {
+      "id": "US-025",
+      "title": "Implement agent-cli monitor subcommand with live table",
+      "description": "Add a `monitor` subcommand that reads .watch.json and polls each directory every 2 seconds, rendering a live-updating table showing project name, branch, iteration progress, story progress, status, cost, and last activity. Uses only existing dependencies (chalk + ANSI escape codes) — no new deps. Status detection: running (session exists, timestamp <30s), idle (session exists, stale), done (no session, all stories pass), stopped (no session, incomplete).",
+      "acceptanceCriteria": [
+        "New file src/core/monitor.ts with Monitor class",
+        "register monitor subcommand in src/index.ts via commander",
+        "Table displays: PROJECT, BRANCH, ITER, STORIES, STATUS, COST, LAST ACTIVITY",
+        "Table refreshes in-place every 2s using ANSI escape codes",
+        "Status detection works: running, idle, done, stopped",
+        "Graceful exit on Ctrl+C with process signal handling",
+        "Shows empty state message when no directories are configured",
+        "No new dependencies — uses chalk only",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Depends on US-024 for .watch.json config. Monitor runs in its own terminal — doesn't interfere with running agent-cli instances. Designed so the data source can be swapped to BullMQ later."
+    },
+    {
+      "id": "US-026",
+      "title": "Detect branch change via current git branch instead of .last-branch",
+      "description": "Currently archiving only triggers when the branch in prd.json no longer exists (deleted). But if the user simply switches branches with git checkout, the old branch still exists and nothing detects the change. Fix: before starting the loop, compare prd.json branchName with the current git branch (git branch --show-current). If they differ, trigger archiving and update prd.json — even if the old branch still exists.",
+      "acceptanceCriteria": [
+        "Compare prd.json branchName with git branch --show-current before the loop starts",
+        "If they differ, archive the old run and update prd.json with the current branch",
+        "Copy incomplete stories from old prd.json to new prd.json (US-027 dependency)",
+        "Log a warning that branch changed and archiving is happening",
+        "Continue the loop normally after updating",
+        "Works even when the old branch still exists locally",
+        "npm run build passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Replaces the broken .last-branch detection. Depends on US-027 for story migration during archiving."
+    },
+    {
+      "id": "US-027",
+      "title": "Migrate incomplete stories to new prd.json when archiving on branch change",
+      "description": "When archiving triggers due to a branch change, the current behavior copies the entire old prd.json to the archive and starts fresh. This loses incomplete stories. Instead: copy incomplete stories (passes: false) from the old prd.json into the new prd.json, renumbering their priorities if needed. Completed stories stay only in the archive as a record of what was done.",
+      "acceptanceCriteria": [
+        "Before archiving, identify stories with passes: false in the current prd.json",
+        "After archiving, write a new prd.json that includes only the incomplete stories",
+        "Incomplete stories keep their id, title, description, acceptanceCriteria, and notes",
+        "Reset passes to false on migrated stories",
+        "Completed stories are NOT copied to the new prd.json — they live in the archive",
+        "Update branchName in the new prd.json to the current branch",
+        "Log how many stories were migrated vs archived",
+        "If all stories were complete, new prd.json can be empty or minimal",
+        "npm run build passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "This ensures no work is lost when switching branches. The archive preserves the full history including completed stories."
+    },
+    {
+      "id": "US-028",
+      "title": "Fix monitor screen flickering with alternate screen buffer",
+      "description": "The monitor subcommand flickers every 2 seconds because it uses ANSI clearScreen (\\x1b[2J) which erases and redraws the entire terminal. Fix by using an alternate screen buffer (\\x1b[?1049h to enter, \\x1b[?1049l to exit) — the same technique used by htop, vim, and less. This draws to an invisible buffer so there's no visible flash. No new dependencies needed.",
+      "acceptanceCriteria": [
+        "Enter alternate screen buffer on monitor start (\\x1b[?1049h)",
+        "Exit alternate screen buffer on monitor stop and Ctrl+C (\\x1b[?1049l)",
+        "Remove ANSI.clearScreen from the render cycle — use cursor movement only",
+        "No visible flickering during refresh",
+        "Graceful exit restores the original terminal content",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Two-line fix in monitor.ts. No TUI library needed."
+    },
+    {
+      "id": "US-029",
+      "title": "Fix monitor stacking lines instead of overwriting",
+      "description": "The monitor was appending new content every refresh cycle instead of overwriting in place. The root cause: cursor-up movement counted lines including ANSI escape codes from chalk, so the cursor moved the wrong number of lines. Fix: in alternate screen buffer, always move cursor to home position (\\x1b[H) and erase down before each render, instead of counting lines to move up. Remove the renderedLines tracking property.",
+      "acceptanceCriteria": [
+        "render() uses cursorHome + eraseDown instead of cursorUp by line count",
+        "Remove renderedLines property from Monitor class",
+        "No line stacking or duplication during refresh",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Fixed by replacing line-counting cursor movement with cursorHome (\\x1b[H) which is reliable in alternate screen buffer."
+    },
+    {
+      "id": "US-030",
+      "title": "Rewrite monitor with Ink TUI for richer interaction",
+      "description": "Replace the current ANSI-based monitor with an Ink (React for CLI) TUI. Ink provides component-based rendering, automatic layout, keyboard input handling, and eliminates manual ANSI escape code management. The new TUI should keep the same project table but add interactive features: scroll through projects with arrow keys, expand a project to see story-level detail, toggle between views (table vs detail), and show real-time logs for a selected project.",
+      "acceptanceCriteria": [
+        "Install ink and react as dependencies (ink, react, @types/react)",
+        "Replace monitor.ts ANSI rendering with Ink components",
+        "Project table component shows same columns as current: PROJECT, BRANCH, ITER, STORIES, STATUS, COST, LAST ACTIVITY",
+        "Keyboard navigation: arrow keys to select project, Enter to expand detail view",
+        "Detail view shows individual stories with status (pass/fail) for selected project",
+        "Press 'q' or Escape to exit, 't' to toggle back to table view",
+        "Alternate screen buffer still used for clean exit",
+        "Data polling logic (2s interval, session/prd reading) reused from current implementation",
+        "No flickering or stacking issues",
+        "npm run build passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Ink is ~50KB, React-like components for CLI. Current polling logic in collectProjectStatus() should be reused as a hook or service. This replaces US-028/029's manual ANSI approach with a proper component model."
+    },
+    {
+      "id": "US-031",
+      "title": "Create Dockerfile for agent runtime sandbox",
+      "description": "Create a Dockerfile that builds a minimal agent runtime image with Bun, Claude Code CLI, and git. The image is used to run agents in an isolated container where only the project directory is accessible. This provides OS-level sandboxing that prevents agents from accessing or modifying files outside their project, regardless of what commands they try to execute.",
+      "acceptanceCriteria": [
+        "Dockerfile at project root with Bun, git, and Claude Code CLI",
+        "Image runs as non-root user (no sudo access)",
+        "Multi-stage build to keep image small",
+        "Verify image builds: docker build -t agent-cli-runner .",
+        "Container can run claude --version successfully",
+        ".dockerignore excludes node_modules, .git, archive, .tmp",
+        "npm run build passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Foundation for US-032. The image should be lightweight — only what's needed to run the agent. No dev dependencies."
+    },
+    {
+      "id": "US-032",
+      "title": "Add --sandbox flag and Docker spawn mode to tool-runner",
+      "description": "Add a --sandbox CLI flag that makes tool-runner spawn the AI agent inside a Docker container instead of directly on the host. When sandboxed: mount only the project directory as read-write, use --rm for ephemeral containers, set resource limits (memory, CPU), and optionally restrict network. The rest of the agent-cli orchestration (iterator, PRD, archiving) continues to run on the host — only the agent tool runs inside the container.",
+      "acceptanceCriteria": [
+        "Add --sandbox flag to CLI (src/index.ts)",
+        "Add SandboxConfig type to types.ts with image, memory, cpu options",
+        "tool-runner detects sandbox mode and uses docker run instead of direct spawn",
+        "Container mounts only the project directory (-v $projectDir:/workspace)",
+        "Container uses --rm flag (ephemeral, removed after iteration)",
+        "Container runs as non-root with --user flag",
+        "Stdout/stderr streaming still works for completion signal detection",
+        "Prompt file piped to container stdin works correctly",
+        "Add config defaults for Docker image name and resource limits",
+        "Without --sandbox, behavior is unchanged (backward compatible)",
+        "npm run build passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Depends on US-031 for the Docker image. The host-side orchestration (iterator, PRD management, archiving) runs outside the container — only the agent tool is sandboxed."
+    },
+    {
+      "id": "US-033",
+      "title": "Add scoped permission mode as default, keep dangerous mode as fallback option",
+      "description": "The current tool config in config.ts uses --dangerously-skip-permissions which bypasses all of Claude Code's safety checks. Add a scoped permission mode as the DEFAULT that uses --allowedTools with an allowlist of permitted operations. Keep --dangerously-skip-permissions as a fallback option accessible via a flag (e.g. --yolo or --unsafe). Do NOT remove the dangerous option — the user wants to keep it available for trusted/fast iteration scenarios. The scoped mode uses .claude/settings.json allowlist: Read, Write, Edit, Glob, Grep, Bash(npm *), Bash(git *), Bash(bun *), Bash(node *), Bash(ls *), Bash(rm *) — everything else is blocked.",
+      "acceptanceCriteria": [
+        "Add --permission-mode flag to CLI with options: 'scoped' (default) and 'yolo' (keeps --dangerously-skip-permissions)",
+        "Scoped mode uses --allowedTools instead of --dangerously-skip-permissions",
+        "Allowlist: Read, Write, Edit, Glob, Grep, Bash(npm *), Bash(git *), Bash(bun *), Bash(node *), Bash(ls *), Bash(rm *)",
+        "Yolo mode keeps existing behavior with --dangerously-skip-permissions (no changes)",
+        "agent-cli generates or copies the settings.json into the project dir before spawning agent in scoped mode",
+        "Document both modes and when to use each",
+        "Test that agent can still complete normal tasks in scoped mode (read, write, build, test, git, rm files)",
+        "npm run build passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "IMPORTANT: Do NOT remove --dangerously-skip-permissions. Keep it as 'yolo' mode for trusted scenarios. The scoped mode is the safer default. Works with US-032 Docker for defense in depth — even with rm in allowlist, Docker limits filesystem reach."
+    },
+    {
+      "id": "US-034",
+      "title": "Add prompt-level safety constraints to agent-cli.md",
+      "description": "Strengthen the agent-cli.md prompt file with explicit safety rules that the agent must follow. These are soft constraints (prompt-level) that complement the hard constraints from Docker (US-032) and permission config (US-033). Include rules about: never modifying files outside the project directory, never running destructive shell commands, never accessing credentials or secrets, never installing global packages, and always validating file paths before operations.",
+      "acceptanceCriteria": [
+        "Add safety section to agent-cli.md with explicit rules",
+        "Rules cover: filesystem boundaries, destructive commands, credentials, global installs, network requests",
+        "Include examples of forbidden patterns (rm -rf /, sudo, curl | bash, etc.)",
+        "Rules are concise and unambiguous — no room for interpretation",
+        "Agent can still perform all legitimate development tasks",
+        "npm run build passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Softest layer of defense but still valuable — prevents accidental damage even in non-sandboxed environments. Works with US-032 and US-033 for defense in depth."
+    },
+    {
+      "id": "US-035",
+      "title": "Write human-readable agent logs for monitor and tmux tail",
+      "description": "The .agent-output.log file currently contains raw stream-json events because tool-runner writes raw chunks to the log file. Fix: tool-runner must write PARSED, human-readable output to .agent-output.log — reuse the same format that createStreamEventHandler() already produces for process.stdout (tool names with args, text output, iteration markers). This log file is the data source for both the monitor TUI and the tmux integration (US-036).",
+      "acceptanceCriteria": [
+        "tool-runner writes human-readable output to .agent-output.log (not raw stream-json). Reuse the parsing from createStreamEventHandler() — same format shown on stdout: 'Using: Read /path/to/file', text content, iteration headers, cost/duration summaries",
+        "Write to log file in real-time as events are parsed (streaming, not buffered until end)",
+        ".agent-output.log is added to .gitignore",
+        "No new dependencies required",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Root cause: line 291 in tool-runner.ts does logStream.write(chunk) with raw stream-json data. The fix is to write the parsed/formatted output to the log instead — createStreamEventHandler() already produces human-readable output via process.stdout.write() and chalk formatting. The simplest approach: make handleStreamEvent return the formatted strings and write those to the log file. For non-stream-json tools (amp), the raw output is already human-readable so no change needed."
+    },
+    {
+      "id": "US-036",
+      "title": "Add tmux split-pane log viewer to monitor TUI",
+      "description": "Integrate tmux into the monitor TUI so that pressing 'l' on a selected project opens a tmux split pane running `tail -f .agent-output.log` for that project. This allows viewing real-time agent output for multiple projects simultaneously — each in its own tmux pane. The monitor table stays in the main pane. tmux is optional: if not installed, the monitor shows a message suggesting tmux installation and falls back to the Ink-based logs view (last N lines refreshed every 2s).",
+      "acceptanceCriteria": [
+        "Detect if running inside tmux (check TERM and TMUX env vars) and if tmux binary is available",
+        "Press 'l' on a selected project: if tmux available, open a split pane with `tail -f <project>/.agent-output.log`",
+        "Support multiple split panes — pressing 'l' on another project opens another split",
+        "Press 'L' (shift+l) to close all log panes and return to single-pane monitor",
+        "Each log pane has a header/border showing the project name",
+        "If tmux not available, fall back to Ink-based inline log view (tail last 50 lines, refresh every 2s)",
+        "Monitor must be started inside a tmux session for split-pane to work — detect and warn if not",
+        "Graceful cleanup: closing the monitor closes all spawned tail processes",
+        "No new dependencies required — tmux is a system tool",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Depends on US-035 (human-readable log file). Approach: monitor detects tmux availability at startup. When 'l' is pressed, runs `tmux split-pane -h 'tail -f <path>/.agent-output.log'` via child_process.execSync. The monitor itself must run inside tmux for split-pane to work. If not inside tmux, show warning and fall back to Ink inline view. tmux is NOT a hard dependency — monitor works without it, just without live split panes."
     }
   ]
 }

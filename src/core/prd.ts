@@ -186,6 +186,33 @@ export class PRDManager {
   }
 
   /**
+   * Migrate incomplete stories to a new PRD after archiving.
+   * Replaces userStories with only those where passes: false,
+   * resets passes to false on migrated stories, and updates branchName.
+   * Returns counts of migrated and archived (completed) stories.
+   * If all stories were complete, the PRD is left unchanged.
+   */
+  async migrateIncompleteStories(newBranchName: string): Promise<{ migrated: number; archived: number }> {
+    const prd = this.getPRD();
+    const incompleteStories = prd.userStories.filter(s => !s.passes);
+    const archivedCount = prd.userStories.length - incompleteStories.length;
+
+    if (incompleteStories.length === 0) {
+      // All stories complete — leave PRD as-is
+      return { migrated: 0, archived: archivedCount };
+    }
+
+    prd.userStories = incompleteStories.map(s => ({
+      ...s,
+      passes: false,
+    }));
+    prd.branchName = newBranchName;
+    await this.save();
+
+    return { migrated: incompleteStories.length, archived: archivedCount };
+  }
+
+  /**
    * Validate PRD against JSON schema
    * @throws Error if PRD is invalid
    */
