@@ -12,6 +12,7 @@ import { info, success, error, warn, iterationHeader } from '../utils/logger.js'
 import { appendText } from '../utils/file-utils.js';
 import { captureGitStatus, diffGitStatus, displayFileChanges, branchExists, getCurrentBranch } from '../utils/git-utils.js';
 import type { FileChange } from '../utils/git-utils.js';
+import { notifyStoryComplete, isTelegramConfigured } from './telegram.js';
 import chalk from 'chalk';
 import { join } from 'path';
 
@@ -161,6 +162,17 @@ export class AgentIterator {
               });
               const changes = storyChanges.get(story.id) || [];
               await this.displayStoryReport(story, changes);
+
+              // Send Telegram notification (optional, no-op if not configured)
+              const sent = await notifyStoryComplete(this.prdManager.getProjectName(), story, changes);
+              if (isTelegramConfigured()) {
+                await this.logProgress(
+                  sent
+                    ? `Telegram notification sent for story ${story.id}`
+                    : `Telegram notification FAILED for story ${story.id}`,
+                );
+              }
+
               storyChanges.delete(story.id);
             }
           }

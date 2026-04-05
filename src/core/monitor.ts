@@ -5,6 +5,7 @@
 import { createElement } from 'react';
 import { render } from 'ink';
 import { MonitorApp } from './monitor-ui.js';
+import { closeAllLogPanes } from './tmux.js';
 
 /**
  * ANSI escape sequences for terminal control
@@ -52,6 +53,8 @@ export class Monitor {
    * Stop the monitoring TUI and restore terminal state
    */
   stop(): void {
+    // Clean up any tmux log panes
+    closeAllLogPanes();
     if (this.inkInstance) {
       this.inkInstance.unmount();
       this.inkInstance = null;
