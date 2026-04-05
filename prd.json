@@ -36,6 +36,38 @@
       "notes": "Root cause: line 291 in tool-runner.ts does logStream.write(chunk) with raw stream-json data. The fix is to write the parsed/formatted output to the log instead — createStreamEventHandler() already produces human-readable output via process.stdout.write() and chalk formatting. The simplest approach: make handleStreamEvent return the formatted strings and write those to the log file. For non-stream-json tools (amp), the raw output is already human-readable so no change needed."
     },
     {
+      "id": "US-038",
+      "title": "Carregar .env do diretório de instalação do agent-cli",
+      "description": "Atualmente o dotenv carrega o .env do diretório de trabalho (cwd), o que exige que cada projeto tenha TELEGRAM_TOKEN e TELEGRAM_CHAT_ID no seu próprio .env. O correto é carregar o .env do diretório de instalação do agent-cli, para configurar uma vez só e funcionar em qualquer projeto.",
+      "acceptanceCriteria": [
+        "dotenv carrega o .env do diretório de instalação do agent-cli, não do cwd",
+        "Funciona com npm link (carrega do diretório onde o agent-cli está instalado, não do projeto alvo)",
+        "Projetos alvo não precisam ter .env com TELEGRAM_TOKEN ou TELEGRAM_CHAT_ID",
+        "Após implementar, rodar bun run build para verificar que compila",
+        "Após build, rodar um teste manual enviando uma mensagem de teste ao Telegram para confirmar que o .env está sendo carregado corretamente e a notificação funciona",
+        "npm run build passa"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-039",
+      "title": "Formatar duração em minutos/horas ao invés de segundos brutos",
+      "description": "Atualmente a duração da sessão é mostrada em segundos brutos (ex: Duration: 186.2s). Formatar para exibição legível: menos de 60s mostra em segundos, entre 60s e 1h mostra em minutos (ex: 3m 6s), acima de 1h mostra em horas (ex: 1h 2m 30s).",
+      "acceptanceCriteria": [
+        "Criar função utilitária de formatação de duração (ms → string legível)",
+        "Menos de 60s: exibir em segundos (ex: 45.2s)",
+        "60s a 1h: exibir em minutos e segundos (ex: 3m 6s)",
+        "Acima de 1h: exibir em horas, minutos e segundos (ex: 1h 2m 30s)",
+        "Atualizar tool-runner.ts para usar o novo formato no log e no stdout",
+        "npm run build passa"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Os locais a atualizar estão em src/core/tool-runner.ts linhas 336 e 349, onde está Duration: ${(durationMs / 1000).toFixed(1)}s"
+    },
+    {
       "id": "US-036",
       "title": "Add tmux split-pane log viewer to monitor TUI",
       "description": "Integrate tmux into the monitor TUI so that pressing 'l' on a selected project opens a tmux split pane running `tail -f .agent-output.log` for that project. This allows viewing real-time agent output for multiple projects simultaneously — each in its own tmux pane. The monitor table stays in the main pane. tmux is optional: if not installed, the monitor shows a message suggesting tmux installation and falls back to the Ink-based logs view (last N lines refreshed every 2s).",

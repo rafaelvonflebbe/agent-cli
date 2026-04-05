@@ -3,6 +3,7 @@
  * Agent CLI - Main entry point
  */
 
+import dotenv from 'dotenv';
 import { Command } from 'commander';
 import { createConfig, isToolRegistered, getAvailableToolNames, type ToolType, type PermissionMode } from './core/config.js';
 import { runAgent } from './core/iterator.js';
@@ -22,6 +23,8 @@ import type { SandboxConfig } from './core/types.js';
 // Package info - use __dirname for ES modules compatibility
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = join(__filename, '..');
+// Load .env from agent-cli installation directory, not cwd (works with npm link)
+dotenv.config({ path: join(__dirname, '../.env') });
 const packagePath = join(__dirname, '../package.json');
 const packageJson = JSON.parse(readFileSync(packagePath, 'utf-8'));
 
