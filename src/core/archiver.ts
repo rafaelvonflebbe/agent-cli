@@ -3,10 +3,8 @@
  */
 
 import type { ArchiveCheckResult, ArchiveInfo } from './types.js';
-import { join, dirname } from 'path';
-import { existsSync } from 'fs';
+import { join } from 'path';
 import {
-  fileExists,
   readText,
   writeText,
   ensureDir,
@@ -15,9 +13,6 @@ import {
 } from '../utils/file-utils.js';
 import { info, warn } from '../utils/logger.js';
 import { rename } from 'fs/promises';
-
-/** Last branch file name */
-const LAST_BRANCH_FILE = '.last-branch';
 
 /** Archive directory name */
 const ARCHIVE_DIR = 'archive';
@@ -36,45 +31,22 @@ const PRD_FILE = 'prd.json';
  */
 export class Archiver {
   private readonly directory: string;
-  private readonly lastBranchPath: string;
   private readonly archiveBasePath: string;
 
   constructor(directory: string) {
     this.directory = directory;
-    this.lastBranchPath = join(directory, LAST_BRANCH_FILE);
     this.archiveBasePath = join(directory, ARCHIVE_DIR);
   }
 
   /**
-   * Check if archiving is needed and perform it
+   * Check if archiving is needed and perform it.
+   * Branch-change archiving was previously handled via .last-branch comparison,
+   * but that mechanism was dead code (initialize wrote before checkAndArchive read).
+   * Now a no-op — branch switching is handled by stale branch detection in the iterator.
    */
   async checkAndArchive(currentBranch: string): Promise<ArchiveCheckResult> {
-    const previousBranch = await this.readLastBranch();
-
-    // No previous branch or same branch - no archive needed
-    if (!previousBranch || previousBranch === currentBranch) {
-      // Update last branch file
-      await this.writeLastBranch(currentBranch);
-      return {
-        archived: false,
-        currentBranch,
-      };
-    }
-
-    // Branch changed - archive the previous run
-    info(`Branch changed from '${previousBranch}' to '${currentBranch}'`);
-    const archiveInfo = await this.archive(previousBranch);
-
-    // Reset progress file for new run
-    await this.resetProgressFile(currentBranch);
-
-    // Update last branch file
-    await this.writeLastBranch(currentBranch);
-
     return {
-      archived: true,
-      archive: archiveInfo,
-      previousBranch,
+      archived: false,
       currentBranch,
     };
   }
@@ -144,28 +116,6 @@ Started: ${new Date().toISOString()}
   }
 
   /**
-   * Read the last branch from file
-   */
-  private async readLastBranch(): Promise<string | null> {
-    if (!fileExistsSync(this.lastBranchPath)) {
-      return null;
-    }
-
-    try {
-      return await readText(this.lastBranchPath);
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Write the current branch to last branch file
-   */
-  private async writeLastBranch(branch: string): Promise<void> {
-    await writeText(this.lastBranchPath, branch);
-  }
-
-  /**
    * Initialize progress file if it doesn't exist.
    * Migrates legacy progress.txt to progress.log if needed.
    */
@@ -195,7 +145,6 @@ Started: ${new Date().toISOString()}
    */
   async initialize(currentBranch: string): Promise<void> {
     await this.initProgressFile(currentBranch);
-    await this.writeLastBranch(currentBranch);
   }
 }
 

@@ -104,3 +104,43 @@ In live mode (not dry-run), the iterator captures `git status --porcelain` befor
 - ESM-only (`"type": "module"`), ES2022 target, strict mode
 - Factory functions (`createXxx`) alongside classes for each module
 - Node >= 20
+
+## Safety Rules
+
+You MUST follow these rules at all times. Violations are not permitted under any circumstances.
+
+### Filesystem Boundaries
+- NEVER modify, delete, or create files outside the project directory
+- NEVER access files in parent directories, sibling directories, or absolute paths outside the project
+- NEVER modify `.git/` contents directly
+- ALWAYS validate file paths are within the project directory before reading or writing
+
+### Destructive Commands
+- NEVER run `rm -rf /`, `rm -rf ~`, or any recursive delete targeting non-project directories
+- NEVER run `sudo` for any operation
+- NEVER run `chmod -R 777` or equivalent broad permission changes
+- NEVER use `git push --force`, `git reset --hard`, or other destructive git operations unless explicitly instructed by the user
+- NEVER truncate, drop, or wipe databases or data stores
+
+### Credentials and Secrets
+- NEVER read, log, or output `.env` files, API keys, tokens, passwords, or credentials
+- NEVER hardcode secrets, keys, or credentials in source code
+- NEVER commit files containing secrets (`.env`, `credentials.json`, `*.pem`, `*.key`)
+
+### Package Management
+- NEVER install global npm packages (`npm install -g`)
+- NEVER run `curl | bash`, `curl | sh`, or pipe remote content to a shell
+- NEVER download or execute untrusted scripts from the internet
+
+### Network Requests
+- NEVER make outbound network requests to exfiltrate data
+- NEVER send project files, environment variables, or credentials to external services
+- Only use network requests that are part of legitimate development tasks (npm install, git push, etc.)
+
+### Allowed Patterns (for reference)
+These are examples of legitimate operations you MAY perform:
+- `npm install`, `npm run build`, `npm test` — package management and builds
+- `git add`, `git commit`, `git push` — version control
+- `bun run`, `node` — running code
+- `ls`, `cat`, `grep`, `find` — reading and searching files
+- `rm` on specific project files — cleaning up within the project directory

@@ -101,6 +101,19 @@ export function diffGitStatus(
 }
 
 /**
+ * Get the current git branch name, or null if in detached HEAD state
+ */
+export async function getCurrentBranch(directory: string): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync('git branch --show-current', { cwd: directory });
+    const branch = stdout.trim();
+    return branch.length > 0 ? branch : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Check if a git branch exists locally
  */
 export async function branchExists(branchName: string, directory: string): Promise<boolean> {

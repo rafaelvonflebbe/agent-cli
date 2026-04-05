@@ -3,13 +3,15 @@
  */
 
 import { spawn } from 'child_process';
-import { createReadStream } from 'fs';
-import type { ToolResult, ToolType } from './types.js';
-import { getToolCommand, getPromptFile, getToolConfig } from './config.js';
+import { createReadStream, createWriteStream, writeFileSync, mkdirSync, type WriteStream } from 'fs';
+import type { ToolResult, ToolType, SandboxConfig, PermissionMode } from './types.js';
+import { getToolCommand, getPromptFile, getToolConfig, SCOPED_ALLOWED_TOOLS } from './config.js';
 import { join } from 'path';
 import { info, error, iterationHeader } from '../utils/logger.js';
 import { fileExistsSync } from '../utils/file-utils.js';
 import chalk from 'chalk';
+
+const AGENT_OUTPUT_LOG = '.agent-output.log';
 
 /**
  * Format tool input into a human-readable summary instead of raw JSON.
@@ -96,7 +98,7 @@ function formatToolInput(_toolName: string, input: Record<string, unknown>): str
  * when the content block ends (content_block_stop), so tool args like
  * file_path are available even when they arrive incrementally.
  */
-function createStreamEventHandler() {
+function createStreamEventHandler(logStream?: WriteStream) {
   let currentToolName: string | null = null;
   let inputJsonBuffer = '';
 
@@ -140,6 +142,7 @@ function createStreamEventHandler() {
           const text = delta.text as string | undefined;
           if (text) {
             process.stdout.write(text);
+            logStream?.write(text);
           }
         } else if (deltaType === 'input_json_delta') {
           // Accumulate JSON fragments silently
@@ -160,7 +163,9 @@ function createStreamEventHandler() {
             // Malformed JSON — skip detail
           }
           const detail = input ? formatToolInput(currentToolName, input) : '';
-          process.stdout.write(chalk.magenta(`  Using: ${currentToolName}${detail}\n`));
+          const toolMsg = `  Using: ${currentToolName}${detail}\n`;
+          process.stdout.write(chalk.magenta(toolMsg));
+          logStream?.write(toolMsg);
           currentToolName = null;
           inputJsonBuffer = '';
         }
@@ -191,11 +196,15 @@ export class ToolRunner {
   private readonly directory: string;
   private readonly tool: ToolType;
   private readonly completionSignal: string;
+  private readonly sandbox?: SandboxConfig;
+  private readonly permissionMode: PermissionMode;
 
-  constructor(directory: string, tool: ToolType, completionSignal: string) {
+  constructor(directory: string, tool: ToolType, completionSignal: string, sandbox?: SandboxConfig, permissionMode: PermissionMode = 'scoped') {
     this.directory = directory;
     this.tool = tool;
     this.completionSignal = completionSignal;
+    this.sandbox = sandbox;
+    this.permissionMode = permissionMode;
   }
 
   /**
@@ -204,6 +213,11 @@ export class ToolRunner {
   async run(iteration: number, maxIterations: number): Promise<ToolResult> {
     iterationHeader(iteration, maxIterations, this.tool);
 
+    // Create log file for real-time agent output
+    const logPath = join(this.directory, AGENT_OUTPUT_LOG);
+    const logStream = createWriteStream(logPath, { flags: 'w' });
+    logStream.write(`--- Iteration ${iteration}/${maxIterations} (${this.tool}) ---\n`);
+
     const promptFile = join(this.directory, getPromptFile(this.tool));
 
     // Check if prompt file exists
@@ -211,14 +225,49 @@ export class ToolRunner {
       throw new Error(`Prompt file not found: ${promptFile}`);
     }
 
-    const { command, args } = getToolCommand(this.tool);
+    // Generate .claude/settings.json for scoped mode
+    if (this.permissionMode === 'scoped') {
+      this.ensureSettingsJson();
+    }
+
+    const { command, args } = getToolCommand(this.tool, this.permissionMode);
     const toolConfig = getToolConfig(this.tool);
     const usesStreamJson = toolConfig.args.includes('stream-json');
 
-    info(`Running: ${command} ${args.join(' ')} < ${getPromptFile(this.tool)}`);
+    let spawnCommand: string;
+    let spawnArgs: string[];
+
+    if (this.sandbox) {
+      // Build docker run command
+      const dockerArgs = [
+        'run',
+        '--rm',
+        '-i', // interactive: keep stdin open for prompt piping
+        '-v', `${this.directory}:/workspace`,
+        '--user', `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
+      ];
+
+      if (this.sandbox.memory) {
+        dockerArgs.push('--memory', this.sandbox.memory);
+      }
+      if (this.sandbox.cpu) {
+        dockerArgs.push('--cpus', this.sandbox.cpu);
+      }
+
+      dockerArgs.push(this.sandbox.image);
+      dockerArgs.push(command, ...args);
+
+      spawnCommand = 'docker';
+      spawnArgs = dockerArgs;
+      info(`Running (sandboxed): docker ${dockerArgs.join(' ')} < ${getPromptFile(this.tool)}`);
+    } else {
+      spawnCommand = command;
+      spawnArgs = args;
+      info(`Running: ${command} ${args.join(' ')} < ${getPromptFile(this.tool)}`);
+    }
 
     // Spawn the process
-    const proc = spawn(command, args, {
+    const proc = spawn(spawnCommand, spawnArgs, {
       cwd: this.directory,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
@@ -237,7 +286,7 @@ export class ToolRunner {
 
     if (usesStreamJson) {
       // Parse stream-json events line-by-line
-      const handleStreamEvent = createStreamEventHandler();
+      const handleStreamEvent = createStreamEventHandler(logStream);
       let lineBuffer = '';
       proc.stdout?.on('data', (data) => {
         const chunk = data.toString();
@@ -264,6 +313,7 @@ export class ToolRunner {
         const chunk = data.toString();
         stdout += chunk;
         process.stdout.write(chunk);
+        logStream.write(chunk);
       });
     }
 
@@ -272,11 +322,21 @@ export class ToolRunner {
       const chunk = data.toString();
       stderr += chunk;
       process.stderr.write(chunk);
+      logStream.write(chunk);
     });
 
     // Wait for process to complete
     return new Promise<ToolResult>((resolve) => {
       proc.on('close', (code, signal) => {
+        // Write cost/duration summary to log before closing
+        if (totalCostUsd !== undefined) {
+          logStream.write(`Cost: $${totalCostUsd.toFixed(4)}\n`);
+        }
+        if (durationMs !== undefined) {
+          logStream.write(`Duration: ${(durationMs / 1000).toFixed(1)}s\n`);
+        }
+        logStream.end();
+
         // Fallback: also check raw stdout for the completion signal
         if (!completed) {
           completed = stdout.includes(this.completionSignal);
@@ -304,6 +364,7 @@ export class ToolRunner {
 
       // Handle spawn errors
       proc.on('error', (err) => {
+        logStream.end();
         error(`Failed to spawn ${command}: ${err.message}`);
 
         resolve({
@@ -318,13 +379,41 @@ export class ToolRunner {
   }
 
   /**
-   * Check if the tool is available
+   * Ensure .claude/settings.json exists with the scoped allowlist.
+   * This is read by Claude Code when --allowedTools is used.
+   */
+  private ensureSettingsJson(): void {
+    const claudeDir = join(this.directory, '.claude');
+    const settingsPath = join(claudeDir, 'settings.json');
+
+    if (fileExistsSync(settingsPath)) {
+      return; // Don't overwrite existing settings
+    }
+
+    if (!fileExistsSync(claudeDir)) {
+      mkdirSync(claudeDir, { recursive: true });
+    }
+
+    const allowedTools = [...SCOPED_ALLOWED_TOOLS];
+    const settings = {
+      permissions: {
+        allow: allowedTools,
+      },
+    };
+
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+    info(`Generated scoped permission settings at ${settingsPath}`);
+  }
+
+  /**
+   * Check if the tool is available (or docker is available when sandboxed)
    */
   async isAvailable(): Promise<boolean> {
-    const { command } = getToolCommand(this.tool);
+    const checkCommand = this.sandbox ? 'docker' : getToolConfig(this.tool).command;
+    const checkArgs = ['--version'];
 
     return new Promise((resolve) => {
-      const proc = spawn(command, ['--version'], {
+      const proc = spawn(checkCommand, checkArgs, {
         stdio: 'ignore',
         shell: false,
       });
@@ -353,7 +442,9 @@ export class ToolRunner {
 export function createToolRunner(
   directory: string,
   tool: ToolType,
-  completionSignal: string
+  completionSignal: string,
+  sandbox?: SandboxConfig,
+  permissionMode: PermissionMode = 'scoped'
 ): ToolRunner {
-  return new ToolRunner(directory, tool, completionSignal);
+  return new ToolRunner(directory, tool, completionSignal, sandbox, permissionMode);
 }

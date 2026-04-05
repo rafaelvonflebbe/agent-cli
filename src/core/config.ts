@@ -2,9 +2,32 @@
  * Configuration management for Agent CLI
  */
 
-import type { AgentConfig, ToolType, ToolConfig } from './types.js';
+import type { AgentConfig, ToolType, ToolConfig, SandboxConfig, PermissionMode } from './types.js';
 
-export type { ToolType, ToolConfig } from './types.js';
+export type { ToolType, ToolConfig, PermissionMode } from './types.js';
+
+/**
+ * Scoped permission allowlist — tools the agent is allowed to use in scoped mode.
+ * Maps directly to --allowedTools flags passed to Claude Code.
+ */
+export const SCOPED_ALLOWED_TOOLS = [
+  'Read',
+  'Write',
+  'Edit',
+  'Glob',
+  'Grep',
+  'Bash(npm *)',
+  'Bash(git *)',
+  'Bash(bun *)',
+  'Bash(node *)',
+  'Bash(ls *)',
+  'Bash(rm *)',
+] as const;
+
+/**
+ * Shared args used by all tools regardless of permission mode.
+ */
+const SHARED_ARGS = ['--output-format', 'stream-json', '--include-partial-messages', '--verbose'];
 
 /**
  * Built-in tool registry: maps tool names to their configuration.
@@ -13,12 +36,12 @@ export type { ToolType, ToolConfig } from './types.js';
 const TOOL_REGISTRY: Record<string, ToolConfig> = {
   claude: {
     command: 'claude',
-    args: ['--dangerously-skip-permissions', '--output-format', 'stream-json', '--include-partial-messages', '--verbose'],
+    args: [...SHARED_ARGS],
     promptFile: 'agent-cli.md',
   },
   openclaude: {
     command: 'openclaude',
-    args: ['--dangerously-skip-permissions', '--output-format', 'stream-json', '--include-partial-messages', '--verbose'],
+    args: [...SHARED_ARGS],
     promptFile: 'agent-cli.md',
   },
 };
@@ -32,7 +55,13 @@ const DEFAULTS = {
   iterationDelay: 2000,
   completionSignal: '<promise>COMPLETE</promise>',
   dryRun: false,
-} satisfies Record<string, ToolType | number | string | boolean>;
+  permissionMode: 'scoped' as PermissionMode,
+  sandbox: {
+    image: 'agent-cli-runner',
+    memory: '512m',
+    cpu: '1.0',
+  } satisfies SandboxConfig,
+};
 
 /**
  * Create an agent configuration with defaults applied
@@ -47,6 +76,8 @@ export function createConfig(options: Partial<AgentConfig> = {}): AgentConfig {
     dryRun: options.dryRun ?? false,
     maxStories: options.maxStories,
     resume: options.resume,
+    sandbox: options.sandbox,
+    permissionMode: options.permissionMode ?? DEFAULTS.permissionMode,
   };
 }
 
@@ -103,11 +134,24 @@ export function getToolConfig(tool: string): ToolConfig {
 }
 
 /**
- * Get the command and arguments for a specific tool
+ * Get the command and arguments for a specific tool, with permission mode applied.
+ * - 'yolo': adds --dangerously-skip-permissions
+ * - 'scoped': adds --allowedTools for each entry in SCOPED_ALLOWED_TOOLS
  */
-export function getToolCommand(tool: string): { command: string; args: string[] } {
+export function getToolCommand(tool: string, permissionMode: PermissionMode = 'scoped'): { command: string; args: string[] } {
   const config = getToolConfig(tool);
-  return { command: config.command, args: [...config.args] };
+  const args = [...config.args];
+
+  if (permissionMode === 'yolo') {
+    args.unshift('--dangerously-skip-permissions');
+  } else {
+    // scoped mode: add --allowedTools for each allowed tool
+    for (const allowed of SCOPED_ALLOWED_TOOLS) {
+      args.push('--allowedTools', allowed);
+    }
+  }
+
+  return { command: config.command, args };
 }
 
 /**
@@ -122,3 +166,10 @@ export function getPromptFile(tool: string): string {
  * Export defaults for reference
  */
 export const DEFAULT_CONFIG = DEFAULTS;
+
+/**
+ * Get the default sandbox configuration
+ */
+export function getSandboxDefaults(): SandboxConfig {
+  return { ...DEFAULTS.sandbox };
+}

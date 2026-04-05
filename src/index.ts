@@ -4,7 +4,7 @@
  */
 
 import { Command } from 'commander';
-import { createConfig, isToolRegistered, getAvailableToolNames, type ToolType } from './core/config.js';
+import { createConfig, isToolRegistered, getAvailableToolNames, type ToolType, type PermissionMode } from './core/config.js';
 import { runAgent } from './core/iterator.js';
 import { runInit } from './core/init.js';
 import { createSessionManager } from './core/session.js';
@@ -14,7 +14,10 @@ import { join } from 'path';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { createPRDManager } from './core/prd.js';
+import { addDirectory, removeDirectory, listDirectories } from './core/watch-config.js';
+import { createMonitor } from './core/monitor.js';
 import chalk from 'chalk';
+import type { SandboxConfig } from './core/types.js';
 
 // Package info - use __dirname for ES modules compatibility
 const __filename = fileURLToPath(import.meta.url);
@@ -40,7 +43,9 @@ program
   .option('--init', 'Bootstrap agent-cli files in the target directory and exit')
   .option('--stories <number>', 'Maximum number of stories to complete per run')
   .option('--resume', 'Resume from a previous interrupted session')
-  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; stories?: string; resume?: boolean }) => {
+  .option('--sandbox', 'Run AI tool inside a Docker container for isolation')
+  .option('--permission-mode <mode>', 'Permission mode: scoped (default, allowlisted tools only) or yolo (skip all permissions, full access)', 'scoped')
+  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; stories?: string; resume?: boolean; sandbox?: boolean; permissionMode: string }) => {
     try {
       // Handle --init mode
       if (options.init) {
@@ -85,6 +90,13 @@ program
         }
       }
 
+      // Validate permission mode
+      if (options.permissionMode !== 'scoped' && options.permissionMode !== 'yolo') {
+        error(`--permission-mode must be 'scoped' or 'yolo', got '${options.permissionMode}'`);
+        process.exit(1);
+      }
+      const permissionMode: PermissionMode = options.permissionMode;
+
       const config = createConfig({
         tool: options.tool,
         directory: options.directory,
@@ -92,6 +104,8 @@ program
         dryRun: options.dryRun,
         maxStories,
         resume: options.resume,
+        sandbox: options.sandbox ? { image: 'agent-cli-runner' } satisfies SandboxConfig : undefined,
+        permissionMode,
       });
 
       // Check for existing session
@@ -205,6 +219,58 @@ statusCommand
   });
 
 program.addCommand(statusCommand);
+
+/**
+ * Watch subcommand - manage monitored directories
+ */
+const watchCommand = new Command('watch');
+watchCommand
+  .description('Manage monitored project directories')
+  .option('--add <path>', 'Add a directory to the watch list')
+  .option('--remove <path>', 'Remove a directory from the watch list')
+  .action(async (options: { add?: string; remove?: string }) => {
+    try {
+      if (options.add && options.remove) {
+        error('Cannot use --add and --remove together');
+        process.exit(1);
+      }
+
+      if (options.add) {
+        await addDirectory(options.add);
+      } else if (options.remove) {
+        await removeDirectory(options.remove);
+      } else {
+        await listDirectories();
+      }
+
+      process.exit(0);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      error(`Failed: ${message}`);
+      process.exit(1);
+    }
+  });
+
+program.addCommand(watchCommand);
+
+/**
+ * Monitor subcommand - live-updating table of watched projects
+ */
+const monitorCommand = new Command('monitor');
+monitorCommand
+  .description('Show live-updating status table for watched projects')
+  .action(async () => {
+    try {
+      const monitor = createMonitor();
+      await monitor.start();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      error(`Monitor failed: ${message}`);
+      process.exit(1);
+    }
+  });
+
+program.addCommand(monitorCommand);
 
 // Parse command line arguments
 program.parseAsync(process.argv).catch((err: unknown) => {

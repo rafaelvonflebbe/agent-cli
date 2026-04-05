@@ -1,317 +1,8 @@
 {
   "project": "agent-cli",
-  "branchName": "feat/new_tools",
+  "branchName": "feat/bun",
   "description": "A test project for agent-cli",
   "userStories": [
-    {
-      "id": "US-001",
-      "title": "Create a test file",
-      "description": "Create a simple test file to verify the agent works",
-      "acceptanceCriteria": [
-        "Create test.txt with hello content",
-        "Typecheck passes"
-      ],
-      "priority": 1,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-003",
-      "title": "Log iteration progress to progress.txt during the agent loop",
-      "description": "The main loop in src/core/iterator.ts never writes to progress.txt during iterations. The file is created by the Archiver with a header but remains empty throughout the run. After each iteration, the loop should append a timestamped entry to progress.txt with the iteration number, which story was targeted, and the current completion status. This makes progress.txt the human-readable run log it was designed to be, and fixes the misleading message at line 108 that says 'Check progress.txt for details' when the file has no details.",
-      "acceptanceCriteria": [
-        "After each iteration in the main loop, append a timestamped entry to progress.txt with: iteration number, targeted story id/title, and completion status",
-        "When all stories complete, append a final summary entry to progress.txt",
-        "When max iterations are reached without completion, append a warning entry to progress.txt",
-        "The Archiver's initProgressFile creates the file with a header that entries can be appended to",
-        "Build passes with npm run build",
-        "Verify manually by running with --dry-run that progress.txt gets populated"
-      ],
-      "priority": 3,
-      "passes": true,
-      "notes": "progress.txt is currently a dead file — created but never written to during the loop. This was found by inspecting src/core/iterator.ts lines 61-108."
-    },
-    {
-      "id": "US-002",
-      "title": "Add --dry-run flag to test loop iteration without spawning tools",
-      "description": "Add a --dry-run flag to the CLI that simulates the loop by logging what would happen at each iteration (which story would be picked, which tool would run) without actually spawning the AI tool. This allows verifying that the loop correctly picks the highest-priority incomplete story, tracks progress across iterations, and detects completion when all stories have passes:true.",
-      "acceptanceCriteria": [
-        "Add --dry-run flag to the CLI in src/index.ts via commander",
-        "In dry-run mode, log which story would be picked, which tool would run, and the iteration number",
-        "Simulate completing one story per iteration (set passes:true on the next incomplete story, then reload)",
-        "Detect and log completion when all stories have passes:true",
-        "Do NOT spawn any external process in dry-run mode",
-        "Build passes with npm run build"
-      ],
-      "priority": 2,
-      "passes": true,
-      "notes": "This story validates the loop mechanism. If dry-run completes successfully, the loop orchestration is working correctly."
-    },
-    {
-      "id": "US-004",
-      "title": "Add --init flag to bootstrap agent-cli files in a target project directory",
-      "description": "Add a --init flag that copies the scaffold files (agent-cli.md, progress.txt header) to a target directory specified by --directory. If prd.json already exists in the target directory, skip the copy and warn the user — they may have existing work. If it doesn't exist, copy a template prd.json with placeholder values. This lets users run `agent-cli --init --directory /path/to/project` to set up a new project quickly without manually creating the files.",
-      "acceptanceCriteria": [
-        "Add --init flag to the CLI in src/index.ts via commander",
-        "When --init is used, copy agent-cli.md from the agent-cli package to the target directory",
-        "Create progress.txt with the standard header in the target directory",
-        "If prd.json already exists in the target directory, skip it and log a warning — do not overwrite",
-        "If prd.json does not exist, copy a template prd.json with placeholder project name, branchName, description, and one example userStory",
-        "Exit after init completes — do not start the agent loop",
-        "Build passes with npm run build"
-      ],
-      "priority": 4,
-      "passes": true,
-      "notes": "This is a setup convenience command. The template prd.json should have clear placeholder values the user can edit."
-    },
-    {
-      "id": "US-005",
-      "title": "Show targeted story in iteration header and remove all 'Ralph' branding",
-      "description": "Two changes: (1) Before each live iteration, display the next incomplete story (id, title, priority) in the iteration header so the user knows what the agent is about to work on. (2) Remove all references to 'Ralph' across the codebase — replace with 'Agent CLI' or equivalent. Found occurrences: src/core/archiver.ts line 133 ('Ralph Progress Log'), src/utils/logger.ts line 100 (iteration header), src/core/init.ts line 51 ('Ralph Progress Log'), package.json description, and progress.txt.",
-      "acceptanceCriteria": [
-        "Iteration header shows the targeted story: id, title, and priority before each live iteration starts",
-        "In dry-run mode the targeted story is also shown",
-        "Replace 'Ralph Progress Log' with 'Agent CLI Progress Log' in archiver.ts and init.ts",
-        "Replace 'Ralph Iteration' with 'Agent CLI Iteration' in logger.ts",
-        "Update package.json description to remove 'Ralph'",
-        "Build passes with npm run build"
-      ],
-      "priority": 5,
-      "passes": true,
-      "notes": "Files with 'Ralph': src/core/archiver.ts:133, src/utils/logger.ts:100, src/core/init.ts:51, package.json:4"
-    },
-    {
-      "id": "US-006",
-      "title": "Show file changes with colors after each iteration",
-      "description": "After each live iteration completes, detect which files changed (added, modified, removed) by comparing git status before and after the tool runs. Display the changes with chalk colors: green for added/modified, red for removed. This gives the user a clear summary of what the AI tool did in each iteration.",
-      "acceptanceCriteria": [
-        "Capture git status before each live iteration starts",
-        "After the iteration, run git status again and diff the two snapshots to detect added, modified, and removed files",
-        "Display added files with green + prefix: + path/to/file.ts (added)",
-        "Display modified files with green + prefix: + path/to/file.ts (modified)",
-        "Display removed files with red - prefix: - path/to/file.ts (removed)",
-        "Show the file change summary between the iteration progress line and the next iteration header",
-        "In dry-run mode, skip file change detection (no actual changes happen)",
-        "Build passes with npm run build"
-      ],
-      "priority": 6,
-      "passes": true,
-      "notes": "Use git status --porcelain to detect changes. Chalk is already a dependency."
-    },
-    {
-      "id": "US-007",
-      "title": "Show changed files report after story completion in CLI and progress.txt",
-      "description": "When a story completes (passes:true), generate a report of all files that were changed during the iterations that worked on that story. Show the report in the CLI output immediately after the completion message, and also append it to progress.txt. This gives the user a clear summary of what was done to complete each story, both on-screen and in the persistent log.",
-      "acceptanceCriteria": [
-        "When a story is detected as completed (passes changed to true), collect all files changed since the story started being worked on",
-        "Display the file changes report in the CLI output right after the story completion message, using chalk colors (green for added/modified, red for removed)",
-        "Append the same file changes report to progress.txt as a section under the story completion entry",
-        "The report in progress.txt should include: story id, story title, list of changed files with their status (added/modified/removed)",
-        "In dry-run mode, skip the report (no actual changes happen)",
-        "Build passes with npm run build"
-      ],
-      "priority": 7,
-      "passes": true,
-      "notes": "This builds on US-006 which tracks per-iteration changes. This story tracks cumulative changes per story across potentially multiple iterations."
-    },
-    {
-      "id": "US-008",
-      "title": "Add 'status' command to show completed and pending stories",
-      "description": "Add a `status` subcommand to the agent-cli that reads prd.json and displays a summary of how many stories are completed and how many are pending. This gives users a quick way to check progress without running the agent loop.",
-      "acceptanceCriteria": [
-        "Add a `status` subcommand to the CLI in src/index.ts via commander",
-        "The command accepts --directory <path> to specify where prd.json lives (default: cwd)",
-        "Load prd.json and display: total stories, completed count, pending count",
-        "List pending stories with their id, title, and priority",
-        "If all stories are complete, show a success message",
-        "If prd.json doesn't exist, show an error",
-        "Build passes with npm run build"
-      ],
-      "priority": 8,
-      "passes": true,
-      "notes": "PRDManager already has getStatus() method that returns all needed data."
-    },
-    {
-      "id": "US-009",
-      "title": "Add JSON schema for prd.json validation",
-      "description": "Create a JSON schema (prd.schema.json) that validates the prd.json format. The schema should enforce all required fields: project (string), branchName (string), description (string), and userStories (array of objects with id, title, description, acceptanceCriteria, priority, passes, notes). Update PRDManager.load() to validate prd.json against this schema on load, providing clear error messages when validation fails. IMPORTANT: maintain backward compatibility — existing prd.json files must continue to work without changes. Fields like project and branchName are typically set once and do not change during the agent loop, so the schema should not enforce mutability constraints on them.",
-      "acceptanceCriteria": [
-        "Create prd.schema.json with the full schema for prd.json",
-        "Integrate schema validation into PRDManager.load() — reject invalid prd.json with a clear error message",
-        "Existing prd.json files must pass validation without any changes (backward compatible)",
-        "Schema validates required fields: project, branchName, description, userStories[]",
-        "Each userStory validates: id, title, description, acceptanceCriteria[], priority (number), passes (boolean), notes (string)",
-        "Build passes with npm run build"
-      ],
-      "priority": 9,
-      "passes": true,
-      "notes": "Implemented with ajv for JSON schema validation. Schema validates all required fields with clear error messages. Backward compatible — existing prd.json passes validation."
-    },
-    {
-      "id": "US-010",
-      "title": "Detect stale branch and clean up prd.json and progress.txt",
-      "description": "When the agent loop starts, check if the branchName in prd.json still exists (git branch --list). If the branch no longer exists (was merged and deleted, or removed), the loop should: (1) clear branchName from prd.json (set to empty string or remove it), (2) log in progress.txt which branch was being worked on and that it no longer exists, (3) archive the run under that branch name, (4) stop the loop since there is no valid branch to work on. Additionally, progress.txt should always include the branchName in its header and in each iteration entry so it's clear which branch was active during execution.",
-      "acceptanceCriteria": [
-        "On loop start, check if prd.json branchName exists via git branch --list",
-        "If branch no longer exists: clear branchName in prd.json, log to progress.txt which branch was stale, and stop the loop",
-        "progress.txt header includes the active branchName",
-        "Each iteration entry in progress.txt includes the branchName that was active",
-        "When a stale branch is detected, archive the run before stopping",
-        "Log a clear warning to the user that the branch no longer exists",
-        "Build passes with npm run build"
-      ],
-      "priority": 10,
-      "passes": true,
-      "notes": "This prevents the agent from running on a ghost branch. The branch check should happen before any iteration starts."
-    },
-    {
-      "id": "US-011",
-      "title": "Update agent-cli.md with new features documentation",
-      "description": "Update agent-cli.md (the prompt file sent to the AI tool) to document the new features added by US-008 through US-010: the status command, prd.json schema validation, and stale branch detection/cleanup. The agent needs to know about these capabilities so it can use them correctly when working on stories. This task must be executed last, after all other new stories are complete, so the documentation reflects the final state of the codebase.",
-      "acceptanceCriteria": [
-        "Update agent-cli.md to document the `status` subcommand (US-008)",
-        "Document prd.json schema validation and how it works (US-009)",
-        "Document stale branch detection behavior and what happens to prd.json/progress.txt (US-010)",
-        "Update the Architecture section if any new modules were added",
-        "Ensure the prompt file accurately reflects the current codebase capabilities",
-        "Build passes with npm run build"
-      ],
-      "priority": 11,
-      "passes": true,
-      "notes": "All features documented: status command, schema validation, stale branch detection, file change tracking, progress logging, --init, --dry-run, --stories flags."
-    },
-    {
-      "id": "US-012",
-      "title": "Add --stories flag to control how many stories the agent executes per run",
-      "description": "Add a --stories <number> CLI flag that lets the user choose how many stories to execute in a single run. If the flag is not provided or the value doesn't exist, the agent behaves as it does now — executes one story per iteration, iterating until max_iterations is reached or all stories are complete. If --stories 3 is passed, the agent should stop after completing 3 stories (or earlier if max_iterations is hit or all stories are done). This gives users control over how much work the agent does per run.",
-      "acceptanceCriteria": [
-        "Add --stories <number> flag to the CLI in src/index.ts via commander",
-        "If --stories is not provided, behavior is unchanged — iterate normally until max_iterations or all complete",
-        "If --stories N is provided, stop the loop after N stories have been completed in this run",
-        "The count is per-run, not total — if 2 stories were already complete and --stories 3 is passed, complete up to 3 more",
-        "Log how many stories were completed vs requested when the loop stops",
-        "Respect max_iterations as the hard upper bound — even if --stories 10 is passed, stop at max_iterations",
-        "Build passes with npm run build"
-      ],
-      "priority": 5,
-      "passes": true,
-      "notes": "Default behavior (no flag) must remain exactly as it is today — one story per iteration, looping until done or max_iterations."
-    },
-    {
-      "id": "US-013",
-      "title": "Stream real-time claude output during iterations instead of silent waiting",
-      "description": "When running claude as the tool, the user currently sees only the iteration header and then nothing until the iteration finishes. Switch claude to use --output-format stream-json --include-partial-messages --verbose flags so that each line of stdout is a JSON event. Parse these events in real-time and display: text deltas (assistant response), tool use names and inputs, and completion status. This replaces the current silent wait with live feedback showing what the agent is doing. The completion signal (<promise>COMPLETE</promise>) should be detected in the final 'result' event's result field. Also extract and log cost/duration from the result event. For amp or other tools, keep current behavior unchanged.",
-      "acceptanceCriteria": [
-        "When tool is 'claude', add --output-format stream-json --include-partial-messages --verbose to the command args",
-        "Parse stdout line-by-line as JSON — each line is a separate event object",
-        "Display text_delta events in real-time (print the delta text directly to stdout)",
-        "When content_block_start has type 'tool_use', show the tool name being called (e.g. 'Using: Read package.json')",
-        "When input_json_delta arrives, show the tool input being constructed",
-        "Detect completion by checking the 'result' event (type='result') for <promise>COMPLETE</promise> in its result field",
-        "Extract and log total_cost_usd and duration_ms from the result event",
-        "For amp tool, keep current behavior — no changes",
-        "Backward compatible: existing stdout capture for completion detection still works as fallback",
-        "Build passes with npm run build"
-      ],
-      "priority": 3,
-      "passes": true,
-      "notes": "Investigation showed: stream-json requires --verbose flag. Events: system (init), stream_event (real-time deltas), assistant (complete message), user (tool results), result (final). Key stream_event.event types: content_block_start (tool_use detection), content_block_delta (text_delta for text, thinking_delta for thinking, input_json_delta for tool input)."
-    },
-    {
-      "id": "US-014",
-      "title": "Display status command output as a formatted table",
-      "description": "Replace the current plain-text status output with a formatted table that shows all stories (completed and pending) in a single view. Use chalk for colors: green checkmark for completed stories, yellow circle for pending. Columns: Status, ID, Priority, Title, Acceptance Criteria count. Add a summary row at the bottom with totals. Sort by priority within each group (completed first, then pending). Keep the --dir flag working as-is. Use only chalk and Node built-ins — no external table library.",
-      "acceptanceCriteria": [
-        "Replace current plain-text status output with a table showing all stories",
-        "Table columns: Status (icon), ID, Priority, Title, Acceptance Criteria (count)",
-        "Completed stories show green checkmark, pending stories show yellow circle",
-        "Sort completed stories first (by priority), then pending stories (by priority)",
-        "Summary row at bottom shows total completed vs pending counts",
-        "Keep --dir flag working unchanged",
-        "No external table library — use chalk and manual formatting only",
-        "Build passes with npm run build"
-      ],
-      "priority": 1,
-      "passes": true,
-      "notes": "Replaced plain-text output with formatted table using chalk. Shows all stories sorted by completion status then priority, with summary row."
-    },
-    {
-      "id": "US-015",
-      "title": "Task Dependency Graph for User Stories",
-      "description": "Add optional dependency tracking to user stories so that stories with unmet dependencies are skipped and only become eligible once their blockers are completed. This enables intelligent execution ordering where independent stories can run in any order but dependent stories wait for their prerequisites. The PRD manager's getNextStory() method already picks the highest-priority incomplete story — this enhancement adds a dependency filter on top of that logic.",
-      "acceptanceCriteria": [
-        "UserStory interface in types.ts includes optional 'dependsOn: string[]' field (array of story IDs this story depends on)",
-        "prd.schema.json updated to accept optional 'dependsOn' array of strings alongside existing fields",
-        "PRDManager.getNextStory() respects dependencies — only returns stories whose dependsOn IDs all have passes: true",
-        "Stories with unmet dependencies are skipped during iteration and the next eligible story is selected",
-        "Stories without dependsOn behave exactly as before (backward compatible — no migration needed)",
-        "The 'status' CLI command shows dependency info for each story (e.g., 'blocked by: US-017')",
-        "On PRD load, validate that all dependsOn IDs reference existing story IDs — warn but don't crash on invalid references",
-        "Build passes with npm run build"
-      ],
-      "priority": 1,
-      "passes": true,
-      "notes": "Added dependsOn optional field to UserStory, schema, and PRDManager. getNextStory() respects dependencies. Status command shows blocked-by info. Backward compatible."
-    },
-    {
-      "id": "US-016",
-      "title": "Multi-Provider Support with Tool Registry",
-      "description": "Refactor the tool system to use a registry pattern that makes it trivial to add new AI CLI tools. Remove amp as a supported tool (no longer used). Add openclaude as a first-class provider alongside claude (which becomes the default). The registry maps tool names to their configuration (command, args, promptFile), eliminating the need to modify config.ts when adding new providers.",
-      "acceptanceCriteria": [
-        "Replace the ToolType union ('amp' | 'claude') with a string type to allow arbitrary tool names",
-        "Create a tool registry (object or Map) that maps tool names to { command, args, promptFile } config objects",
-        "Remove all amp-specific code: tool-runner amp branch, getToolCommand amp case, getPromptFile amp case",
-        "Change default tool from 'amp' to 'claude' in config.ts",
-        "Built-in tools (claude, openclaude) are pre-registered as defaults",
-        "openclaude is registered with command 'openclaude' and appropriate args for non-interactive execution",
-        "getToolCommand() and getPromptFile() work via registry lookup instead of switch statements",
-        "validateConfig() accepts any tool name that exists in the registry",
-        "--tool flag accepts any registered tool name",
-        "If a tool name is not in the registry, show a clear error listing available tools",
-        "Update agent-cli.md to remove amp references and document claude as default + openclaude as alternative",
-        "Build passes with npm run build"
-      ],
-      "priority": 2,
-      "passes": true,
-      "notes": "Inspired by OpenClaude's multi-provider architecture and claudecode's tool registry pattern. Medium effort — refactoring config.ts + types.ts."
-    },
-    {
-      "id": "US-017",
-      "title": "Session Resume — Save and Restore Iterator State",
-      "description": "When the agent loop is interrupted (Ctrl+C, crash, timeout), save its state to a .session.json file so the user can resume from where they left off. This prevents losing progress on long-running PRD implementations with many stories. The session file tracks which iteration was running, which stories were completed in this run, and when the session was last updated.",
-      "acceptanceCriteria": [
-        "Create a .session.json file at the start of each run with fields: currentIteration, completedStoryIds (array), lastStoryId, timestamp, tool, branchName",
-        "Update .session.json after each story completion (not just at the end of the run)",
-        "Add a --resume flag to the CLI that checks for .session.json and restores state from it",
-        "On resume, skip stories that were already completed in the previous session — start from the next incomplete story",
-        "If .session.json exists and user runs without --resume, show a prompt: 'Previous session found (X stories completed). Resume? [Y/n]'",
-        "Delete .session.json when all stories complete successfully (clean exit)",
-        "Add .session.json to .gitignore",
-        "Dry-run mode also supports session save/resume",
-        "Build passes with npm run build"
-      ],
-      "priority": 3,
-      "passes": true,
-      "notes": "Inspired by claudecode's session persistence pattern. Simple file-based approach that fits agent-cli's architecture. Depends on US-015 for dependency-aware resume."
-    },
-    {
-      "id": "US-018",
-      "title": "Rename progress.txt to progress.log with backward compatibility",
-      "description": "Rename the progress tracking file from progress.txt to progress.log to better reflect its nature as an append-only log file. Maintain full backward compatibility: if progress.txt exists but progress.log doesn't, rename it automatically. All references across the codebase (archiver, iterator, init, status, docs) must be updated.",
-      "acceptanceCriteria": [
-        "All code references to 'progress.txt' are changed to 'progress.log'",
-        "On startup, if progress.txt exists and progress.log doesn't, automatically rename progress.txt to progress.log and log the migration",
-        "If both files exist, use progress.log and ignore progress.txt (don't crash)",
-        "The --init command creates progress.log instead of progress.txt",
-        "The archive system archives progress.log (not progress.txt)",
-        "progress.log is added to .gitignore (replace progress.txt entry if present)",
-        "Update agent-cli.md and CLAUDE.md to reference progress.log instead of progress.txt",
-        "Build passes with npm run build"
-      ],
-      "priority": 1,
-      "passes": true,
-      "notes": "The file is an append-only run log — .log extension is more semantically correct. The backward compat rename keeps existing projects working without manual migration."
-    },
     {
       "id": "US-019",
       "title": "Migrate runtime from Node + tsgo to Bun",
@@ -326,8 +17,301 @@
         "Build passes and agent-cli runs correctly with Bun"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "tsgo is only a compiler (TS -> JS), not a runtime. Bun handles both compilation and execution natively, removing the build step entirely."
+    },
+    {
+      "id": "US-020",
+      "title": "Fix stale branch detection to auto-update branchName instead of stopping",
+      "description": "When the stale branch detection (US-010) finds that the branch in prd.json no longer exists, it currently clears branchName to empty string and stops the loop with an error — forcing the user to manually edit prd.json. Instead, it should detect the current git branch (git branch --show-current) and automatically update prd.json with it. If the current branch exists, continue the loop normally. If not on a branch (detached HEAD), only then stop with an error.",
+      "acceptanceCriteria": [
+        "When branchName in prd.json no longer exists, detect current git branch via git branch --show-current",
+        "Auto-update prd.json branchName with the current branch instead of clearing it to empty string",
+        "Log a warning that the old branch was stale and the new branch was set",
+        "Continue the loop normally after updating — do not stop",
+        "If in detached HEAD state (no current branch), stop with an error as before",
+        "Archive the previous run before switching to the new branch",
+        "Build passes with npm run build"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Current behavior clears branchName and crashes. Found when switching from feat/new_tools (deleted) to feat/bun — had to manually edit prd.json. Depends on US-010 (stale branch detection)."
+    },
+    {
+      "id": "US-021",
+      "title": "Remove dead .last-branch mechanism from archiver",
+      "description": "The .last-branch file is intended to detect branch changes between runs and trigger archiving, but it's broken by design: initialize() writes the current branch to .last-branch BEFORE checkAndArchive() reads it, so they always match and archiving on branch change never fires. Since stale branch detection (US-020) already handles the real-world case of switching branches, .last-branch is dead code. Remove the .last-branch file, the readLastBranch/writeLastBranch methods, and simplify checkAndArchive accordingly.",
+      "acceptanceCriteria": [
+        "Delete the .last-branch file from the repo",
+        "Remove readLastBranch and writeLastBranch methods from Archiver",
+        "Simplify checkAndArchive to remove the branch comparison logic",
+        "Remove the lastBranchPath property and LAST_BRANCH_FILE constant",
+        "Remove the .last-branch write from initialize()",
+        "iterator.ts no longer references .last-branch behavior",
+        "Add .last-branch to .gitignore",
+        "npm run build passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "The archiver still archives via handleStaleBranch() in iterator.ts, so removing .last-branch doesn't break the archiving use case. The branch comparison in checkAndArchive was dead logic."
+    },
+    {
+      "id": "US-022",
+      "title": "Translate README.md to English",
+      "description": "The current README.md is partially or fully in Portuguese. Translate all content to English so the project is accessible to a broader audience.",
+      "acceptanceCriteria": [
+        "All text in README.md is in English",
+        "Technical terms, code examples, and project structure remain accurate",
+        "No content is lost or changed in meaning during translation",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "Create architecture documentation with ASCII art and Mermaid diagrams",
+      "description": "Generate visual architecture docs for agent-cli. Create an ASCII art diagram in .tmp/architecture.md showing the main loop flow, module relationships, and data flow between components. Also create .tmp/architecture-mermaid.md with Mermaid versions of the same diagrams. Include suggestions for other useful views (e.g., session lifecycle, archiving flow, PRD state machine) as separate sections or files.",
+      "acceptanceCriteria": [
+        ".tmp/architecture.md contains ASCII art diagrams of the core loop and module relationships",
+        ".tmp/architecture-mermaid.md contains equivalent Mermaid diagrams",
+        "Diagrams cover: main loop flow (iterator), tool spawning, PRD state transitions, archiving flow, session management",
+        "Additional suggested views are documented (e.g., error handling flow, git status tracking)",
+        ".tmp directory is gitignored and does not appear in version control",
+        "npm run build passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "The .tmp/ directory is for local-only documentation that helps developers visualize the system. Not meant to be committed."
+    },
+    {
+      "id": "US-024",
+      "title": "Add global .watch.json config for monitored directories",
+      "description": "Create a global config file at ~/.agent-cli/.watch.json that lists directories to monitor. This allows the monitor subcommand (US-025) to know which projects to track. Provide a way to add/remove directories via CLI flags.",
+      "acceptanceCriteria": [
+        "Global config stored at ~/.agent-cli/.watch.json with { directories: string[] } format",
+        "~/.agent-cli/ directory is auto-created if it doesn't exist",
+        "Add directory via --add <path> flag (resolves to absolute path)",
+        "Remove directory via --remove <path> flag",
+        "Add types WatchConfig and ProjectStatus to types.ts",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "This is the data foundation for the monitor dashboard. Keep it simple — just a JSON array of absolute paths. BullMQ will replace file-based state later."
+    },
+    {
+      "id": "US-025",
+      "title": "Implement agent-cli monitor subcommand with live table",
+      "description": "Add a `monitor` subcommand that reads .watch.json and polls each directory every 2 seconds, rendering a live-updating table showing project name, branch, iteration progress, story progress, status, cost, and last activity. Uses only existing dependencies (chalk + ANSI escape codes) — no new deps. Status detection: running (session exists, timestamp <30s), idle (session exists, stale), done (no session, all stories pass), stopped (no session, incomplete).",
+      "acceptanceCriteria": [
+        "New file src/core/monitor.ts with Monitor class",
+        "register monitor subcommand in src/index.ts via commander",
+        "Table displays: PROJECT, BRANCH, ITER, STORIES, STATUS, COST, LAST ACTIVITY",
+        "Table refreshes in-place every 2s using ANSI escape codes",
+        "Status detection works: running, idle, done, stopped",
+        "Graceful exit on Ctrl+C with process signal handling",
+        "Shows empty state message when no directories are configured",
+        "No new dependencies — uses chalk only",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Depends on US-024 for .watch.json config. Monitor runs in its own terminal — doesn't interfere with running agent-cli instances. Designed so the data source can be swapped to BullMQ later."
+    },
+    {
+      "id": "US-026",
+      "title": "Detect branch change via current git branch instead of .last-branch",
+      "description": "Currently archiving only triggers when the branch in prd.json no longer exists (deleted). But if the user simply switches branches with git checkout, the old branch still exists and nothing detects the change. Fix: before starting the loop, compare prd.json branchName with the current git branch (git branch --show-current). If they differ, trigger archiving and update prd.json — even if the old branch still exists.",
+      "acceptanceCriteria": [
+        "Compare prd.json branchName with git branch --show-current before the loop starts",
+        "If they differ, archive the old run and update prd.json with the current branch",
+        "Copy incomplete stories from old prd.json to new prd.json (US-027 dependency)",
+        "Log a warning that branch changed and archiving is happening",
+        "Continue the loop normally after updating",
+        "Works even when the old branch still exists locally",
+        "npm run build passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Replaces the broken .last-branch detection. Depends on US-027 for story migration during archiving."
+    },
+    {
+      "id": "US-027",
+      "title": "Migrate incomplete stories to new prd.json when archiving on branch change",
+      "description": "When archiving triggers due to a branch change, the current behavior copies the entire old prd.json to the archive and starts fresh. This loses incomplete stories. Instead: copy incomplete stories (passes: false) from the old prd.json into the new prd.json, renumbering their priorities if needed. Completed stories stay only in the archive as a record of what was done.",
+      "acceptanceCriteria": [
+        "Before archiving, identify stories with passes: false in the current prd.json",
+        "After archiving, write a new prd.json that includes only the incomplete stories",
+        "Incomplete stories keep their id, title, description, acceptanceCriteria, and notes",
+        "Reset passes to false on migrated stories",
+        "Completed stories are NOT copied to the new prd.json — they live in the archive",
+        "Update branchName in the new prd.json to the current branch",
+        "Log how many stories were migrated vs archived",
+        "If all stories were complete, new prd.json can be empty or minimal",
+        "npm run build passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "This ensures no work is lost when switching branches. The archive preserves the full history including completed stories."
+    },
+    {
+      "id": "US-028",
+      "title": "Fix monitor screen flickering with alternate screen buffer",
+      "description": "The monitor subcommand flickers every 2 seconds because it uses ANSI clearScreen (\\x1b[2J) which erases and redraws the entire terminal. Fix by using an alternate screen buffer (\\x1b[?1049h to enter, \\x1b[?1049l to exit) — the same technique used by htop, vim, and less. This draws to an invisible buffer so there's no visible flash. No new dependencies needed.",
+      "acceptanceCriteria": [
+        "Enter alternate screen buffer on monitor start (\\x1b[?1049h)",
+        "Exit alternate screen buffer on monitor stop and Ctrl+C (\\x1b[?1049l)",
+        "Remove ANSI.clearScreen from the render cycle — use cursor movement only",
+        "No visible flickering during refresh",
+        "Graceful exit restores the original terminal content",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Two-line fix in monitor.ts. No TUI library needed."
+    },
+    {
+      "id": "US-029",
+      "title": "Fix monitor stacking lines instead of overwriting",
+      "description": "The monitor was appending new content every refresh cycle instead of overwriting in place. The root cause: cursor-up movement counted lines including ANSI escape codes from chalk, so the cursor moved the wrong number of lines. Fix: in alternate screen buffer, always move cursor to home position (\\x1b[H) and erase down before each render, instead of counting lines to move up. Remove the renderedLines tracking property.",
+      "acceptanceCriteria": [
+        "render() uses cursorHome + eraseDown instead of cursorUp by line count",
+        "Remove renderedLines property from Monitor class",
+        "No line stacking or duplication during refresh",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Fixed by replacing line-counting cursor movement with cursorHome (\\x1b[H) which is reliable in alternate screen buffer."
+    },
+    {
+      "id": "US-030",
+      "title": "Rewrite monitor with Ink TUI for richer interaction",
+      "description": "Replace the current ANSI-based monitor with an Ink (React for CLI) TUI. Ink provides component-based rendering, automatic layout, keyboard input handling, and eliminates manual ANSI escape code management. The new TUI should keep the same project table but add interactive features: scroll through projects with arrow keys, expand a project to see story-level detail, toggle between views (table vs detail), and show real-time logs for a selected project.",
+      "acceptanceCriteria": [
+        "Install ink and react as dependencies (ink, react, @types/react)",
+        "Replace monitor.ts ANSI rendering with Ink components",
+        "Project table component shows same columns as current: PROJECT, BRANCH, ITER, STORIES, STATUS, COST, LAST ACTIVITY",
+        "Keyboard navigation: arrow keys to select project, Enter to expand detail view",
+        "Detail view shows individual stories with status (pass/fail) for selected project",
+        "Press 'q' or Escape to exit, 't' to toggle back to table view",
+        "Alternate screen buffer still used for clean exit",
+        "Data polling logic (2s interval, session/prd reading) reused from current implementation",
+        "No flickering or stacking issues",
+        "npm run build passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Ink is ~50KB, React-like components for CLI. Current polling logic in collectProjectStatus() should be reused as a hook or service. This replaces US-028/029's manual ANSI approach with a proper component model."
+    },
+    {
+      "id": "US-031",
+      "title": "Create Dockerfile for agent runtime sandbox",
+      "description": "Create a Dockerfile that builds a minimal agent runtime image with Bun, Claude Code CLI, and git. The image is used to run agents in an isolated container where only the project directory is accessible. This provides OS-level sandboxing that prevents agents from accessing or modifying files outside their project, regardless of what commands they try to execute.",
+      "acceptanceCriteria": [
+        "Dockerfile at project root with Bun, git, and Claude Code CLI",
+        "Image runs as non-root user (no sudo access)",
+        "Multi-stage build to keep image small",
+        "Verify image builds: docker build -t agent-cli-runner .",
+        "Container can run claude --version successfully",
+        ".dockerignore excludes node_modules, .git, archive, .tmp",
+        "npm run build passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Foundation for US-032. The image should be lightweight — only what's needed to run the agent. No dev dependencies."
+    },
+    {
+      "id": "US-032",
+      "title": "Add --sandbox flag and Docker spawn mode to tool-runner",
+      "description": "Add a --sandbox CLI flag that makes tool-runner spawn the AI agent inside a Docker container instead of directly on the host. When sandboxed: mount only the project directory as read-write, use --rm for ephemeral containers, set resource limits (memory, CPU), and optionally restrict network. The rest of the agent-cli orchestration (iterator, PRD, archiving) continues to run on the host — only the agent tool runs inside the container.",
+      "acceptanceCriteria": [
+        "Add --sandbox flag to CLI (src/index.ts)",
+        "Add SandboxConfig type to types.ts with image, memory, cpu options",
+        "tool-runner detects sandbox mode and uses docker run instead of direct spawn",
+        "Container mounts only the project directory (-v $projectDir:/workspace)",
+        "Container uses --rm flag (ephemeral, removed after iteration)",
+        "Container runs as non-root with --user flag",
+        "Stdout/stderr streaming still works for completion signal detection",
+        "Prompt file piped to container stdin works correctly",
+        "Add config defaults for Docker image name and resource limits",
+        "Without --sandbox, behavior is unchanged (backward compatible)",
+        "npm run build passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Depends on US-031 for the Docker image. The host-side orchestration (iterator, PRD management, archiving) runs outside the container — only the agent tool is sandboxed."
+    },
+    {
+      "id": "US-033",
+      "title": "Add scoped permission mode as default, keep dangerous mode as fallback option",
+      "description": "The current tool config in config.ts uses --dangerously-skip-permissions which bypasses all of Claude Code's safety checks. Add a scoped permission mode as the DEFAULT that uses --allowedTools with an allowlist of permitted operations. Keep --dangerously-skip-permissions as a fallback option accessible via a flag (e.g. --yolo or --unsafe). Do NOT remove the dangerous option — the user wants to keep it available for trusted/fast iteration scenarios. The scoped mode uses .claude/settings.json allowlist: Read, Write, Edit, Glob, Grep, Bash(npm *), Bash(git *), Bash(bun *), Bash(node *), Bash(ls *), Bash(rm *) — everything else is blocked.",
+      "acceptanceCriteria": [
+        "Add --permission-mode flag to CLI with options: 'scoped' (default) and 'yolo' (keeps --dangerously-skip-permissions)",
+        "Scoped mode uses --allowedTools instead of --dangerously-skip-permissions",
+        "Allowlist: Read, Write, Edit, Glob, Grep, Bash(npm *), Bash(git *), Bash(bun *), Bash(node *), Bash(ls *), Bash(rm *)",
+        "Yolo mode keeps existing behavior with --dangerously-skip-permissions (no changes)",
+        "agent-cli generates or copies the settings.json into the project dir before spawning agent in scoped mode",
+        "Document both modes and when to use each",
+        "Test that agent can still complete normal tasks in scoped mode (read, write, build, test, git, rm files)",
+        "npm run build passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "IMPORTANT: Do NOT remove --dangerously-skip-permissions. Keep it as 'yolo' mode for trusted scenarios. The scoped mode is the safer default. Works with US-032 Docker for defense in depth — even with rm in allowlist, Docker limits filesystem reach."
+    },
+    {
+      "id": "US-034",
+      "title": "Add prompt-level safety constraints to agent-cli.md",
+      "description": "Strengthen the agent-cli.md prompt file with explicit safety rules that the agent must follow. These are soft constraints (prompt-level) that complement the hard constraints from Docker (US-032) and permission config (US-033). Include rules about: never modifying files outside the project directory, never running destructive shell commands, never accessing credentials or secrets, never installing global packages, and always validating file paths before operations.",
+      "acceptanceCriteria": [
+        "Add safety section to agent-cli.md with explicit rules",
+        "Rules cover: filesystem boundaries, destructive commands, credentials, global installs, network requests",
+        "Include examples of forbidden patterns (rm -rf /, sudo, curl | bash, etc.)",
+        "Rules are concise and unambiguous — no room for interpretation",
+        "Agent can still perform all legitimate development tasks",
+        "npm run build passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Softest layer of defense but still valuable — prevents accidental damage even in non-sandboxed environments. Works with US-032 and US-033 for defense in depth."
+    },
+    {
+      "id": "US-035",
+      "title": "Write human-readable agent logs for monitor and tmux tail",
+      "description": "The .agent-output.log file currently contains raw stream-json events because tool-runner writes raw chunks to the log file. Fix: tool-runner must write PARSED, human-readable output to .agent-output.log — reuse the same format that createStreamEventHandler() already produces for process.stdout (tool names with args, text output, iteration markers). This log file is the data source for both the monitor TUI and the tmux integration (US-036).",
+      "acceptanceCriteria": [
+        "tool-runner writes human-readable output to .agent-output.log (not raw stream-json). Reuse the parsing from createStreamEventHandler() — same format shown on stdout: 'Using: Read /path/to/file', text content, iteration headers, cost/duration summaries",
+        "Write to log file in real-time as events are parsed (streaming, not buffered until end)",
+        ".agent-output.log is added to .gitignore",
+        "No new dependencies required",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Root cause: line 291 in tool-runner.ts does logStream.write(chunk) with raw stream-json data. The fix is to write the parsed/formatted output to the log instead — createStreamEventHandler() already produces human-readable output via process.stdout.write() and chalk formatting. The simplest approach: make handleStreamEvent return the formatted strings and write those to the log file. For non-stream-json tools (amp), the raw output is already human-readable so no change needed."
+    },
+    {
+      "id": "US-036",
+      "title": "Add tmux split-pane log viewer to monitor TUI",
+      "description": "Integrate tmux into the monitor TUI so that pressing 'l' on a selected project opens a tmux split pane running `tail -f .agent-output.log` for that project. This allows viewing real-time agent output for multiple projects simultaneously — each in its own tmux pane. The monitor table stays in the main pane. tmux is optional: if not installed, the monitor shows a message suggesting tmux installation and falls back to the Ink-based logs view (last N lines refreshed every 2s).",
+      "acceptanceCriteria": [
+        "Detect if running inside tmux (check TERM and TMUX env vars) and if tmux binary is available",
+        "Press 'l' on a selected project: if tmux available, open a split pane with `tail -f <project>/.agent-output.log`",
+        "Support multiple split panes — pressing 'l' on another project opens another split",
+        "Press 'L' (shift+l) to close all log panes and return to single-pane monitor",
+        "Each log pane has a header/border showing the project name",
+        "If tmux not available, fall back to Ink-based inline log view (tail last 50 lines, refresh every 2s)",
+        "Monitor must be started inside a tmux session for split-pane to work — detect and warn if not",
+        "Graceful cleanup: closing the monitor closes all spawned tail processes",
+        "No new dependencies required — tmux is a system tool",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Depends on US-035 (human-readable log file). Approach: monitor detects tmux availability at startup. When 'l' is pressed, runs `tmux split-pane -h 'tail -f <path>/.agent-output.log'` via child_process.execSync. The monitor itself must run inside tmux for split-pane to work. If not inside tmux, show warning and fall back to Ink inline view. tmux is NOT a hard dependency — monitor works without it, just without live split panes."
     }
   ]
 }

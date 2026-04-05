@@ -1,65 +1,65 @@
 # Agent CLI
 
-Loop autônomo que usa ferramentas de IA (amp ou claude) para implementar user stories definidas em um PRD (`prd.json`). Ele executa iterações até que todas as stories estejam completas ou o limite de iterações seja atingido.
+An autonomous loop that uses AI tools (amp or claude) to implement user stories defined in a PRD (`prd.json`). It runs iterations until all stories are complete or the iteration limit is reached.
 
-## Como funciona
+## How it works
 
-1. Você cria um arquivo `prd.json` no diretório do seu projeto com as user stories a implementar
-2. O Agent CLI lê o PRD, encontra a story de maior prioridade com `passes: false`
-3. Ele invoca a ferramenta de IA (amp ou claude), alimentando-a com as instruções do `CLAUDE.md` (ou `prompt.md`)
-4. A ferramenta de IA implementa a story e, ao concluir, marca `passes: true` no PRD
-5. O loop repete para a próxima story
-6. Quando todas as stories estão completas, a ferramenta de IA emite `<promise>COMPLETE</promise>` e o loop encerra
+1. You create a `prd.json` file in your project directory with the user stories to implement
+2. Agent CLI reads the PRD, finds the highest priority story with `passes: false`
+3. It invokes the AI tool (amp or claude), feeding it instructions from `CLAUDE.md` (or `prompt.md`)
+4. The AI tool implements the story and, upon completion, sets `passes: true` in the PRD
+5. The loop repeats for the next story
+6. When all stories are complete, the AI tool emits `<promise>COMPLETE</promise>` and the loop ends
 
-## Instalação
+## Installation
 
 ```bash
 npm install
 npm run build
-npm link  # Opcional: para usar `agent-cli` globalmente
+npm link  # Optional: to use `agent-cli` globally
 ```
 
-## Uso básico
+## Basic usage
 
 ```bash
-# No diretório do seu projeto (onde está o prd.json)
+# In your project directory (where prd.json is located)
 agent-cli
 
-# Especificar ferramenta e máximo de iterações
+# Specify tool and maximum iterations
 agent-cli --tool claude 15
 
-# Apontar para outro diretório
-agent-cli --directory /caminho/para/projeto --tool amp 10
+# Point to another directory
+agent-cli --directory /path/to/project --tool amp 10
 ```
 
-| Opção | Descrição | Padrão |
-|-------|-----------|--------|
-| `[max_iterations]` | Número máximo de iterações | `10` |
-| `--tool <amp\|claude>` | Ferramenta de IA a usar | `amp` |
-| `--directory <path>` | Diretório de trabalho | Diretório atual |
-| `--dry-run` | Simula o loop sem spawnar ferramentas externas | `false` |
+| Option | Description | Default |
+|--------|-------------|---------|
+| `[max_iterations]` | Maximum number of iterations | `10` |
+| `--tool <amp\|claude>` | AI tool to use | `claude` |
+| `--directory <path>` | Working directory | Current directory |
+| `--dry-run` | Simulates the loop without spawning external tools | `false` |
 
-## Usando em outro projeto
+## Using in another project
 
-Para usar o Agent CLI em um projeto seu, você precisa de **dois arquivos** no diretório do projeto:
+To use Agent CLI in your own project, you need **two files** in the project directory:
 
-### 1. `prd.json` — Obrigatório
+### 1. `prd.json` — Required
 
-Define as stories que a IA deve implementar:
+Defines the stories that the AI should implement:
 
 ```json
 {
-  "project": "MeuProjeto",
-  "branchName": "feature/minha-feature",
-  "description": "Descrição da feature",
+  "project": "MyProject",
+  "branchName": "feature/my-feature",
+  "description": "Feature description",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Criar endpoint de login",
-      "description": "Implementar POST /api/login com validação",
+      "title": "Create login endpoint",
+      "description": "Implement POST /api/login with validation",
       "acceptanceCriteria": [
-        "Endpoint responde 200 com token válido",
-        "Retorna 401 para credenciais inválidas"
+        "Endpoint returns 200 with valid token",
+        "Returns 401 for invalid credentials"
       ],
       "priority": 1,
       "passes": false,
@@ -67,10 +67,10 @@ Define as stories que a IA deve implementar:
     },
     {
       "id": "US-002",
-      "title": "Adicionar testes de integração",
-      "description": "Testes para o endpoint de login",
+      "title": "Add integration tests",
+      "description": "Tests for the login endpoint",
       "acceptanceCriteria": [
-        "Testes cobrem sucesso e falha"
+        "Tests cover success and failure cases"
       ],
       "priority": 2,
       "passes": false,
@@ -80,78 +80,79 @@ Define as stories que a IA deve implementar:
 }
 ```
 
-**Campos:**
-- `priority`: número menor = prioridade maior (executa primeiro)
-- `passes`: `false` = pendente, `true` = concluída
-- `branchName`: ao mudar, o Agent CLI arquiva a execução anterior automaticamente
+**Fields:**
+- `priority`: lower number = higher priority (runs first)
+- `passes`: `false` = pending, `true` = completed
+- `branchName`: when changed, Agent CLI automatically archives the previous run
 
-### 2. `CLAUDE.md` ou `prompt.md` — Obrigatório
+### 2. `CLAUDE.md` or `prompt.md` — Required
 
-Instruções que a ferramenta de IA vai receber. Use `CLAUDE.md` para claude, `prompt.md` para amp.
+Instructions that the AI tool will receive. Use `CLAUDE.md` for claude, `prompt.md` for amp.
 
-O arquivo deve instruir a IA a:
-1. Ler o `prd.json`
-2. Pegar a story de maior prioridade com `passes: false`
-3. Implementar essa story
-4. Se os testes passarem, atualizar `passes: true` no PRD
-5. Se todas as stories estiverem completas, emitir `<promise>COMPLETE</promise>`
+The file should instruct the AI to:
+1. Read `prd.json`
+2. Pick the highest priority story where `passes: false`
+3. Implement that story
+4. If tests pass, update `passes: true` in the PRD
+5. If all stories are complete, emit `<promise>COMPLETE</promise>`
 
-Exemplo mínimo de `CLAUDE.md`:
+Minimal `CLAUDE.md` example:
 
 ```markdown
-Você é um agente de desenvolvimento.
+You are a development agent.
 
-1. Leia prd.json
-2. Pegue a story com maior prioridade onde passes: false
-3. Implemente essa story
-4. Se funcionar, atualize passes: true no prd.json
-5. Se todas as stories estão completas, responda: <promise>COMPLETE</promise>
+1. Read prd.json
+2. Pick the highest priority story where passes: false
+3. Implement that story
+4. If it works, update passes: true in prd.json
+5. If all stories are complete, respond: <promise>COMPLETE</promise>
 ```
 
-### Exemplo completo
+### Complete example
 
 ```bash
-# No seu projeto
-cd /meu-projeto
+# In your project
+cd /my-project
 
-# Garantir que os arquivos existem
+# Make sure the files exist
 ls prd.json CLAUDE.md
 
-# Executar com claude
+# Run with claude
 agent-cli --tool claude 20
 
-# Ou executar com amp
+# Or run with amp
 agent-cli --tool amp 10
 
-# Simular o loop sem spawnar ferramentas (para testar)
+# Simulate the loop without spawning tools (for testing)
 agent-cli --dry-run 5
 ```
 
-## Arquivamento automático
+## Auto-archiving
 
-Quando o `branchName` no PRD muda entre execuções, o Agent CLI arquiva o estado anterior em:
+When the `branchName` in the PRD changes between runs, Agent CLI archives the previous state in:
 
 ```
-archive/YYYY-MM-DD-nome-da-feature/
+archive/YYYY-MM-DD-feature-name/
   ├── prd.json
   └── progress.log
 ```
 
-## Encerramento
+## Termination
 
-O loop encerra quando:
-- Todas as stories têm `passes: true`, OU
-- O número máximo de iterações é atingido
+The loop ends when:
+- All stories have `passes: true`, OR
+- The maximum number of iterations is reached
 
-## Desenvolvimento
+## Development
 
-Este projeto usa **tsgo** (`@typescript/native-preview`) — o compilador TypeScript nativo em Go, que é significativamente mais rápido que o `tsc` tradicional.
+This project uses **Bun** as its primary runtime, which compiles and runs TypeScript natively with no separate build step.
 
 ```bash
-npm run build      # Compilar com tsgo (recomendado)
-npm run build:old  # Compilar com tsc (fallback)
-npm run dev        # Compilar com tsgo + executar
-npm run watch      # Compilar em modo watch com tsc
+npm run dev        # Run directly with Bun (recommended)
+npm run build      # Bundle with bun build to dist/
+npm run build:old  # Build with tsgo (fallback)
+npm run build:tsc  # Build with standard tsc (fallback)
+npm run watch      # Compile in watch mode with tsc
 ```
 
-Requer Node >= 20.
+Requires Node >= 20.

@@ -10,7 +10,7 @@ import { createSessionManager, SessionManager } from './session.js';
 import { validateConfig } from './config.js';
 import { info, success, error, warn, iterationHeader } from '../utils/logger.js';
 import { appendText } from '../utils/file-utils.js';
-import { captureGitStatus, diffGitStatus, displayFileChanges, branchExists } from '../utils/git-utils.js';
+import { captureGitStatus, diffGitStatus, displayFileChanges, branchExists, getCurrentBranch } from '../utils/git-utils.js';
 import type { FileChange } from '../utils/git-utils.js';
 import chalk from 'chalk';
 import { join } from 'path';
@@ -38,7 +38,9 @@ export class AgentIterator {
     this.toolRunner = createToolRunner(
       config.directory,
       config.tool,
-      config.completionSignal
+      config.completionSignal,
+      config.sandbox,
+      config.permissionMode
     );
     this.sessionManager = createSessionManager(config.directory);
     this.progressFilePath = join(config.directory, 'progress.log');
@@ -49,8 +51,9 @@ export class AgentIterator {
    */
   async run(): Promise<void> {
     const mode = this.config.dryRun ? 'DRY-RUN' : 'LIVE';
+    const sandboxInfo = this.config.sandbox ? ' - Sandbox: ON' : '';
     const storiesLimit = this.config.maxStories ? ` - Stories limit: ${this.config.maxStories}` : '';
-    info(`Starting Agent CLI [${mode}] - Tool: ${this.config.tool} - Max iterations: ${this.config.maxIterations}${storiesLimit}`);
+    info(`Starting Agent CLI [${mode}] - Tool: ${this.config.tool} - Max iterations: ${this.config.maxIterations}${sandboxInfo}${storiesLimit}`);
 
     // Check if PRD exists
     if (!this.prdManager.exists()) {
@@ -66,17 +69,20 @@ export class AgentIterator {
     // Check if the branch still exists
     const exists = await branchExists(this.branchName, this.config.directory);
     if (!exists) {
-      await this.handleStaleBranch(this.branchName);
-      return;
+      const newBranch = await this.handleStaleBranch(this.branchName);
+      if (!newBranch) {
+        return; // Detached HEAD — cannot continue
+      }
+      // Auto-updated to new branch, continue below
     }
 
     // Initialize archive system
     await this.archiver.initialize(this.branchName);
 
-    // Check for archiving (branch change)
-    const archiveCheck = await this.archiver.checkAndArchive(this.branchName);
-    if (archiveCheck.archived) {
-      info(`Archived previous run: ${archiveCheck.archive?.featureName}`);
+    // Detect branch change: compare prd.json branchName with actual git branch
+    const currentBranch = await getCurrentBranch(this.config.directory);
+    if (currentBranch && currentBranch !== this.branchName) {
+      await this.handleBranchChange(this.branchName, currentBranch);
     }
 
     // Handle session: create new or resume existing
@@ -303,27 +309,90 @@ export class AgentIterator {
   }
 
   /**
-   * Handle a stale branch that no longer exists
+   * Handle a stale branch that no longer exists.
+   * Detects the current git branch and auto-updates prd.json instead of stopping.
+   * Returns the new branch name, or null if in detached HEAD (caller should stop).
    */
-  private async handleStaleBranch(branchName: string): Promise<void> {
+  private async handleStaleBranch(branchName: string): Promise<string | null> {
     warn(`Branch '${branchName}' no longer exists!`);
 
-    // Archive the run
+    // Archive the run under the stale branch name
     await this.archiver.archive(branchName);
 
     // Initialize progress file so we can log to it
     await this.archiver.initProgressFile(branchName);
 
-    // Clear branchName in prd.json
-    await this.prdManager.updateBranchName('');
+    // Detect current branch
+    const currentBranch = await getCurrentBranch(this.config.directory);
 
-    // Log to progress.log
+    if (!currentBranch) {
+      // Detached HEAD — cannot continue
+      await this.prdManager.updateBranchName('');
+
+      await this.logProgress(
+        `STALE BRANCH: Branch '${branchName}' no longer exists. ` +
+        `Detected detached HEAD state. Cleared branchName in prd.json and archived the run. Stopping loop.`
+      );
+
+      error(`Cannot continue: branch '${branchName}' no longer exists and repository is in detached HEAD state. Update prd.json with a valid branchName to resume.`);
+      return null;
+    }
+
+    // Migrate incomplete stories to new PRD (completed stories stay in archive)
+    const { migrated, archived } = await this.prdManager.migrateIncompleteStories(currentBranch);
+    this.branchName = currentBranch;
+
+    if (migrated > 0) {
+      info(`Migrated ${migrated} incomplete stories to new branch. ${archived} completed stories archived.`);
+    } else {
+      info(`All ${archived} stories were complete — nothing to migrate.`);
+      await this.prdManager.updateBranchName(currentBranch);
+    }
+
+    // Reset progress file for new branch
+    await this.archiver.resetProgressFile(currentBranch);
+
     await this.logProgress(
       `STALE BRANCH: Branch '${branchName}' no longer exists. ` +
-      `Cleared branchName in prd.json and archived the run. Stopping loop.`
+      `Auto-updated branchName to '${currentBranch}', archived previous run. ` +
+      `Migrated ${migrated} stories, ${archived} completed stories stay in archive. Continuing.`
     );
 
-    error(`Cannot continue: branch '${branchName}' no longer exists. Update prd.json with a valid branchName to resume.`);
+    info(`Continuing on branch '${currentBranch}'`);
+    return currentBranch;
+  }
+
+  /**
+   * Handle a branch change detected by comparing prd.json branchName
+   * with the current git branch. Archives the old run, migrates incomplete
+   * stories, and updates prd.json — even if the old branch still exists.
+   */
+  private async handleBranchChange(oldBranch: string, newBranch: string): Promise<void> {
+    warn(`Branch changed: prd.json has '${oldBranch}' but current branch is '${newBranch}'`);
+
+    // Archive the run under the old branch name
+    await this.archiver.archive(oldBranch);
+
+    // Migrate incomplete stories to new PRD
+    const { migrated, archived } = await this.prdManager.migrateIncompleteStories(newBranch);
+    this.branchName = newBranch;
+
+    if (migrated > 0) {
+      info(`Migrated ${migrated} incomplete stories to new branch. ${archived} completed stories archived.`);
+    } else {
+      info(`All ${archived} stories were complete — nothing to migrate.`);
+      await this.prdManager.updateBranchName(newBranch);
+    }
+
+    // Reset progress file for new branch
+    await this.archiver.resetProgressFile(newBranch);
+
+    await this.logProgress(
+      `BRANCH CHANGE: '${oldBranch}' → '${newBranch}'. ` +
+      `Archived previous run. Migrated ${migrated} stories, ${archived} completed stories stay in archive. Continuing.`
+    );
+
+    info(`Continuing on branch '${newBranch}'`);
   }
 
   /**
