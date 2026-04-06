@@ -2,15 +2,16 @@
  * Init command — bootstraps agent-cli scaffold files in a target directory
  */
 
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { fileExists, writeText, copyFileTo, ensureDir } from '../utils/file-utils.js';
 import { info, success, warn } from '../utils/logger.js';
+import { getCurrentBranch } from '../utils/git-utils.js';
 
 /** Template PRD with placeholder values */
 const TEMPLATE_PRD = {
   project: "Your Project Name",
-  branchName: "feature/your-feature",
+  branchName: "main",
   description: "Describe what this project does",
   userStories: [
     {
@@ -31,7 +32,7 @@ const TEMPLATE_PRD = {
 /**
  * Run the init process — copy scaffold files to the target directory
  */
-export async function runInit(targetDir: string): Promise<void> {
+export async function runInit(targetDir: string, projectDirectory?: string): Promise<void> {
   info(`Initializing agent-cli in: ${targetDir}`);
 
   await ensureDir(targetDir);
@@ -57,8 +58,23 @@ export async function runInit(targetDir: string): Promise<void> {
   if (await fileExists(destPrd)) {
     warn('  prd.json already exists — skipping (will not overwrite)');
   } else {
-    await writeText(destPrd, JSON.stringify(TEMPLATE_PRD, null, 2));
-    success('  Created template prd.json');
+    const prd = { ...TEMPLATE_PRD };
+
+    // Detect current git branch from the working directory
+    const gitDir = projectDirectory ? resolve(projectDirectory) : targetDir;
+    const currentBranch = await getCurrentBranch(gitDir);
+    if (currentBranch) {
+      prd.branchName = currentBranch;
+    } else {
+      prd.branchName = 'main';
+    }
+
+    if (projectDirectory) {
+      // Resolve to absolute path so it works regardless of where agent-cli is run from
+      (prd as Record<string, unknown>).projectDirectory = resolve(projectDirectory);
+    }
+    await writeText(destPrd, JSON.stringify(prd, null, 2));
+    success(`  Created template prd.json (branch: ${prd.branchName})`);
   }
 
   success('Init complete!');

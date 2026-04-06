@@ -86,6 +86,51 @@
       "priority": 3,
       "passes": true,
       "notes": "Depends on US-035 (human-readable log file). Approach: monitor detects tmux availability at startup. When 'l' is pressed, runs `tmux split-pane -h 'tail -f <path>/.agent-output.log'` via child_process.execSync. The monitor itself must run inside tmux for split-pane to work. If not inside tmux, show warning and fall back to Ink inline view. tmux is NOT a hard dependency — monitor works without it, just without live split panes."
+    },
+    {
+      "id": "US-040",
+      "title": "Investigar no git quando projectDirectory foi removido e restaurar comportamento original",
+      "description": "O agent-cli já teve suporte a separar o diretório de configs (prd.json, logs) do diretório de trabalho do AI tool (cwd). Em algum momento essa funcionalidade foi removida. Investigar via git log/blame quando e por que isso aconteceu, e restaurar o comportamento original completo incluindo init, run, e qualquer integração que existia.",
+      "acceptanceCriteria": [
+        "Usar git log e git blame para encontrar o commit que removeu a separação directory/projectDirectory",
+        "Documentar o commit, data e motivo da remoção",
+        "Verificar se a implementação original tinha integrações adicionais que não foram restauradas (ex: prompt file, archiver, monitor, tmux)",
+        "Garantir que init com --directory e --project-directory funciona end-to-end: cria configs em .tmp, AI tool trabalha na raiz",
+        "npm run build passa"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Investigação completa: projectDirectory NUNCA foi removido — nunca foi commitado. Existe apenas como staged changes (nunca committed) no branch feat/tmux. Nenhum commit no git history introduziu ou removeu essa feature. Os staged changes incluem: tipos (PRD, AgentConfig), flag CLI (--project-directory), init (runInit parameter), iterator (resolução do PRD), tool-runner (cwd do processo). Gaps corrigidos: git operations em iterator.ts agora usam projectDirectory quando setado; ensureSettingsJson() agora escreve em projectDirectory para o Claude Code encontrar; prd.schema.json já permite projectDirectory."
+    },
+    {
+      "id": "US-041",
+      "title": "Init usa branchName default 'main'",
+      "description": "O comando --init cria prd.json com branchName hardcoded como 'feature/your-feature'. Mudar para detectar a branch atual do git no diretório alvo. Se não conseguir detectar (não é repo git, erro), usar 'main' como default.",
+      "acceptanceCriteria": [
+        "runInit detecta a branch atual do git no targetDir (ou projectDirectory se fornecido)",
+        "Se detectar, usa a branch atual como branchName no prd.json template",
+        "Se não conseguir detectar, usa 'main' como fallback",
+        "npm run build passa"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "O usuário reportou que o init não está colocando o branch name correto. Hoje o template tem 'feature/your-feature' que nunca é o certo."
+    },
+    {
+      "id": "US-042",
+      "title": "Mostrar duração total acumulada de toda a sessão",
+      "description": "Hoje o agent-cli mostra duração apenas por iteração (Duration: 3m 6s). Não existe um acumulado total. Adicionar contagem de tempo total desde o início da sessão até o fim (seja conclusão de todas stories, max iterations, ou interrupção). Mostrar no log final e no progress.log.",
+      "acceptanceCriteria": [
+        "Registrar timestamp de início da sessão ao entrar no loop principal (run())",
+        "Ao final da sessão (todas stories completas, max iterations, ou erro), calcular duração total",
+        "Mostrar duração total acumulada no stdout: 'Total session time: 1h 2m 30s'",
+        "Escrever duração total no progress.log junto com o summary final",
+        "Usar a função formatDuration() existente para formatar",
+        "npm run build passa"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "O usuário suspeita que só mostra duração por story/iteração e quer ver o total. Locais relevantes: iterator.ts handleComplete() (sucesso), max iterations reached (linha ~248), e o catch de erro. Reutilizar formatDuration() de format-utils.ts."
     }
   ]
 }

@@ -36,6 +36,12 @@ export interface PRD {
   description: string;
   /** User stories to implement */
   userStories: UserStory[];
+  /**
+   * Absolute or relative path to the project directory where the AI tool
+   * actually works (cwd for the spawned process).
+   * If omitted, defaults to the directory containing prd.json.
+   */
+  projectDirectory?: string;
 }
 
 /**
@@ -83,6 +89,11 @@ export interface AgentConfig {
   tool: ToolType;
   /** Working directory containing prd.json */
   directory: string;
+  /**
+   * Project directory where the AI tool works (cwd for the spawned process).
+   * If omitted, defaults to `directory`.
+   */
+  projectDirectory?: string;
   /** Maximum iterations to run */
   maxIterations: number;
   /** Delay between iterations (ms) */
