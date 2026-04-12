@@ -5,7 +5,7 @@
 import { createElement } from 'react';
 import { render } from 'ink';
 import { MonitorApp } from './monitor-ui.js';
-import { closeAllLogPanes } from './tmux.js';
+import { closeAllLogPanes, ensureTmuxSession } from './tmux.js';
 
 /**
  * ANSI escape sequences for terminal control
@@ -27,6 +27,9 @@ export class Monitor {
    * Start the monitoring TUI
    */
   async start(): Promise<void> {
+    // Auto-start tmux session if available (re-execs inside tmux if needed)
+    ensureTmuxSession();
+
     // Enter alternate screen buffer
     process.stdout.write(ANSI.enterAltScreen + ANSI.hideCursor);
 

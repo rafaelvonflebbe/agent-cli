@@ -56,7 +56,7 @@ The tmux module (`src/core/tmux.ts`) provides split-pane log viewing in the moni
 
 - **Detection:** `isInsideTmux()` checks `TMUX` and `TERM` env vars. `isTmuxAvailable()` checks if the `tmux` binary exists.
 - **Opening panes:** `openLogPane(directory, projectName)` runs `tmux split-pane -h` with a `tail -f .agent-output.log` command. Each directory gets one pane tracked in a `Map<directory, paneId>`.
-- **Closing panes:** `closeLogPane(directory)` kills a specific pane. `closeAllLogPanes()` kills all tracked panes (triggered by `L` key or monitor exit).
+- **Closing panes:** `closeLogPane(directory)` kills a specific pane. `closeAllLogPanes()` kills all tracked panes (triggered by `Esc` key or monitor exit).
 - **Fallback:** When tmux is unavailable, the monitor shows an inline log view (last 50 lines, refreshed every 2s via Ink).
 
 ## Building and Running
@@ -82,8 +82,9 @@ tmux new -s agent-cli
 cd /path/to/project
 bun run src/index.ts monitor
 
-# Press 'l' on a project to open a split pane with live logs
-# Press 'L' to close all log panes
+# Press Enter on a project to open a split pane with live logs
+# Press Esc to close all log panes
+# Press 's' to view stories
 # Press 'q' to quit
 ```
 

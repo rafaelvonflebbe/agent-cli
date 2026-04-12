@@ -84,10 +84,9 @@ agent-cli monitor
 | Key | Action |
 |-----|--------|
 | Up/Down | Navigate projects |
-| Enter | Open detail view (stories/logs) |
-| `l` | Open live log view (tmux split pane or inline) |
-| `L` | Close all tmux log panes |
-| `s` | Switch to stories view (in detail) |
+| Enter | Open live log view (tmux split pane or inline) |
+| Esc | Close all tmux log panes |
+| `s` | Open detail view (stories) |
 | `t` | Return to table view |
 | `q` | Quit monitor |
 
@@ -105,11 +104,11 @@ tmux new -s agent-cli
 # Inside tmux, launch the monitor
 agent-cli monitor
 
-# Press 'l' on a project — opens a split pane with tail -f .agent-output.log
-# Press 'L' — closes all log panes
+# Press Enter on a project — opens a split pane with tail -f .agent-output.log
+# Press Esc — closes all log panes
 ```
 
-When tmux is not available or the monitor is not inside a tmux session, pressing `l` shows an inline log view with the last 50 lines refreshed every 2 seconds.
+When tmux is not available or the monitor is not inside a tmux session, pressing `Enter` shows an inline log view with the last 50 lines refreshed every 2 seconds.
 
 ## Notifications (Telegram)
 

@@ -131,6 +131,44 @@
       "priority": 2,
       "passes": true,
       "notes": "O usuário suspeita que só mostra duração por story/iteração e quer ver o total. Locais relevantes: iterator.ts handleComplete() (sucesso), max iterations reached (linha ~248), e o catch de erro. Reutilizar formatDuration() de format-utils.ts."
+    },
+    {
+      "id": "US-043",
+      "title": "Auto-start tmux session when monitor launches",
+      "description": "When the monitor TUI starts, detect if tmux is installed but the process is not inside a tmux session. If so, automatically re-exec the monitor inside a new tmux session so split-pane log viewing works without manual setup. If a session named 'agent-cli' already exists, attach to it instead of creating a new one. If tmux is not installed, continue normally with inline fallback. The tmux session must close automatically when the monitor exits (user presses q).",
+      "acceptanceCriteria": [
+        "New ensureTmuxSession() function in src/core/tmux.ts",
+        "If TMUX env var is set, return true immediately (already inside tmux)",
+        "If tmux binary not found (which tmux fails), return false",
+        "If tmux installed but not in session: spawnSync tmux new-session -s agent-cli with current argv, then process.exit(0)",
+        "If session agent-cli already exists: attach instead (tmux attach-session -t agent-cli)",
+        "monitor.ts calls ensureTmuxSession() before entering alt screen buffer",
+        "When monitor exits, tmux session closes automatically (command exits)",
+        "npm run build passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Replaces manual 'tmux new -s agent-cli && agent-cli monitor' workflow. spawnSync blocks until tmux exits, so original process never renders Ink — clean re-exec pattern."
+    },
+    {
+      "id": "US-044",
+      "title": "Remap monitor keybindings: Enter=log pane, Esc=close, s=detail",
+      "description": "The current keybindings use lowercase/uppercase 'l'/'L' for open/close which is confusing. Remap: Enter opens log pane (tmux split or inline), Esc closes panes and returns to table, 's' opens detail view (stories). Remove all 'l' and 'L' handlers. Update help text in footer to reflect new keys.",
+      "acceptanceCriteria": [
+        "Table view: Enter opens log pane (tmux split if available, inline fallback otherwise) — replaces old 'l' behavior",
+        "Table view: Esc closes all open log panes and stays in table view",
+        "Table view: 's' opens detail view with stories — replaces old Enter behavior",
+        "Detail view: 's' switches to stories subview (unchanged)",
+        "Detail view: 't' or Esc returns to table (unchanged)",
+        "Remove 'l' and 'L' handlers from all views",
+        "Update footer help text to show: Enter=open log, Esc=close, s=stories, t=table, q=quit",
+        "Update README.md and AGENTS.md keyboard controls table",
+        "npm run build passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Depends on US-043 for tmux auto-start. Key changes all in src/core/monitor-ui.tsx useInput handler (lines ~277-358).",
+      "dependsOn": ["US-043"]
     }
   ]
 }

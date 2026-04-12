@@ -153,11 +153,9 @@ function DetailView({ project, stories, subView, logs }: {
       <Box>
         <Text color="gray">  Press </Text>
         <Text bold>s</Text>
-        <Text color="gray"> for stories · </Text>
-        <Text bold>l</Text>
-        <Text color="gray"> for logs · </Text>
+        <Text color="gray">=stories · </Text>
         <Text bold>t</Text>
-        <Text color="gray"> to return to table</Text>
+        <Text color="gray">=table</Text>
       </Box>
     </Box>
   );
@@ -294,13 +292,6 @@ export function MonitorApp() {
         setDetailSubView('stories');
         return;
       }
-      if (input === 'l') {
-        setDetailSubView('logs');
-        if (detailProject) {
-          setDetailLogs(readAgentLog(detailProject.directory));
-        }
-        return;
-      }
     }
 
     // Inline log view (fallback)
@@ -320,20 +311,7 @@ export function MonitorApp() {
       } else if (key.downArrow) {
         setSelectedIndex(i => Math.min(Math.max(projects.length - 1, 0), i + 1));
       } else if (key.return && projects.length > 0) {
-        const project = projects[selectedIndex];
-        if (project) {
-          loadStoriesForProject(project.directory).then(stories => {
-            setDetailStories(stories);
-            setDetailProject(project);
-            setDetailSubView('stories');
-            setDetailLogs(readAgentLog(project.directory));
-            setView('detail');
-          });
-        }
-      } else if (key.escape) {
-        handleExit();
-      } else if (input === 'l' && projects.length > 0) {
-        // 'l' — open log pane (tmux) or inline log view (fallback)
+        // Enter — open log pane (tmux) or inline log view (fallback)
         const project = projects[selectedIndex];
         if (!project) return;
 
@@ -348,11 +326,23 @@ export function MonitorApp() {
           setDetailLogs(readAgentLog(project.directory));
           setView('logtable');
         }
-      } else if (input === 'L' && tmuxStatus === 'available') {
-        // 'L' (shift+l) — close all log panes
+      } else if (key.escape) {
+        // Esc — close all log panes and stay in table view
         const closed = closeAllLogPanes();
         if (closed > 0) {
           setOpenPaneDirs(getOpenPaneDirectories());
+        }
+      } else if (input === 's' && projects.length > 0) {
+        // 's' — open detail view with stories
+        const project = projects[selectedIndex];
+        if (project) {
+          loadStoriesForProject(project.directory).then(stories => {
+            setDetailStories(stories);
+            setDetailProject(project);
+            setDetailSubView('stories');
+            setDetailLogs(readAgentLog(project.directory));
+            setView('detail');
+          });
         }
       }
     }
@@ -388,22 +378,21 @@ export function MonitorApp() {
           <ProjectTable projects={projects} selectedIndex={selectedIndex} openPaneDirs={openPaneDirs} />
           <Box>
             <Text color="gray">  Press </Text>
-            <Text bold>l</Text>
-            <Text color="gray"> on a project to open log pane</Text>
-            {tmuxStatus === 'available' && openPaneDirs.size > 0 && (
-              <>
-                <Text color="gray"> · </Text>
-                <Text bold>L</Text>
-                <Text color="gray"> to close all panes</Text>
-              </>
-            )}
+            <Text bold>Enter</Text>
+            <Text color="gray">=open log · </Text>
+            <Text bold>Esc</Text>
+            <Text color="gray">=close · </Text>
+            <Text bold>s</Text>
+            <Text color="gray">=stories · </Text>
+            <Text bold>q</Text>
+            <Text color="gray">=quit</Text>
           </Box>
         </>
       )}
 
       <Text>{' '}</Text>
       <Box>
-        <Text color="gray">{projects.length} director{projects.length === 1 ? 'y' : 'ies'} · {now} · {tmuxInfo} · q to quit</Text>
+        <Text color="gray">{projects.length} director{projects.length === 1 ? 'y' : 'ies'} · {now} · {tmuxInfo}</Text>
       </Box>
     </Box>
   );

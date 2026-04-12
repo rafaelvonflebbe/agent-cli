@@ -3,7 +3,7 @@
  * for the monitor TUI's live log viewer.
  */
 
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { join } from 'path';
 
 const AGENT_OUTPUT_LOG = '.agent-output.log';
@@ -28,6 +28,47 @@ export function isTmuxAvailable(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Ensure the monitor is running inside a tmux session.
+ * If already inside tmux → return true.
+ * If tmux is not installed → return false (monitor works without it).
+ * If tmux is installed but not in a session → re-exec inside a new/attached session.
+ * Returns true if now inside tmux (or already was), false if tmux unavailable.
+ */
+export function ensureTmuxSession(): boolean {
+  // Already inside tmux — nothing to do
+  if (isInsideTmux()) return true;
+
+  // No tmux binary — can't auto-start
+  if (!isTmuxAvailable()) return false;
+
+  // Check if a session named 'agent-cli' already exists
+  let sessionExists = false;
+  try {
+    execSync('tmux has-session -t agent-cli', { stdio: 'pipe' });
+    sessionExists = true;
+  } catch {
+    // has-session returns non-zero when session doesn't exist
+    sessionExists = false;
+  }
+
+  // Re-exec the current process inside tmux
+  const argv = process.argv;
+  const cmd = argv[0];       // node / bun
+  const args = argv.slice(1); // e.g. [ '/path/to/agent-cli', 'monitor' ]
+
+  if (sessionExists) {
+    // Attach to existing session — this blocks until tmux exits
+    spawnSync('tmux', ['attach-session', '-t', 'agent-cli'], { stdio: 'inherit' });
+  } else {
+    // Create new session — this blocks until tmux exits
+    spawnSync('tmux', ['new-session', '-s', 'agent-cli', cmd, ...args], { stdio: 'inherit' });
+  }
+
+  // When tmux exits, exit the original process (it never rendered anything)
+  process.exit(0);
 }
 
 /**
