@@ -32,11 +32,43 @@ Agent CLI is an autonomous loop that drives an AI tool (amp or claude) to iterat
 - `src/core/config.ts` — Defaults (tool: `amp`, maxIterations: `10`, delay: `2000ms`), validation, and tool command/args mapping.
 - `src/core/types.ts` — All TypeScript interfaces: `PRD`, `UserStory`, `AgentConfig`, `ToolResult`, `ArchiveInfo`, etc.
 
-**Utilities:** `src/utils/file-utils.ts` (JSON/text file I/O), `src/utils/logger.ts` (chalk-based colored logging with levels).
+**Observability modules:**
+- `src/core/monitor.ts` — Ink-based full-screen TUI lifecycle (alt screen buffer, cursor management, cleanup).
+- `src/core/monitor-ui.tsx` — React/Ink components: project table, detail view (stories/logs), inline log fallback, keyboard navigation.
+- `src/core/monitor-data.ts` — Polling logic: collects ProjectStatus from watched directories, reads agent log tails.
+- `src/core/tmux.ts` — Detects tmux session/binary availability, manages split panes (`tmux split-pane -h` with `tail -f`), tracks open panes per directory. Requires tmux installed and the monitor running inside a tmux session. Falls back to inline log view when tmux is unavailable.
+- `src/core/telegram.ts` — Sends HTML-formatted notifications via Telegram Bot API on story completion. Configured via `TELEGRAM_TOKEN` and `TELEGRAM_CHAT_ID` in `.env` (loaded from agent-cli install directory, not cwd).
+
+**Other modules:**
+- `src/core/session.ts` — `.session.json` persistence for interrupted run recovery (`--resume` flag).
+- `src/core/watch-config.ts` — Global `~/.agent-cli/.watch.json` for registered project directories.
+- `src/core/init.ts` — `--init` scaffolding: copies `agent-cli.md`, creates `progress.log`, generates template `prd.json` with auto-detected git branch.
+
+**Utilities:** `src/utils/file-utils.ts` (JSON/text file I/O), `src/utils/git-utils.ts` (git status capture/diff, branch detection), `src/utils/logger.ts` (chalk-based colored logging with levels), `src/utils/format-utils.ts` (human-readable duration formatting).
 
 ## PRD Format
 
 The working directory must contain `prd.json` with: `project`, `branchName`, `description`, and `userStories[]` (each with `id`, `title`, `description`, `acceptanceCriteria[]`, `priority`, `passes`, `notes`).
+
+## CLI Commands
+
+```
+agent-cli [max_iterations] [options]   # Run the agent loop
+agent-cli status [-d <path>]           # Show story progress
+agent-cli watch [--add|--remove <path>]# Manage watched directories
+agent-cli monitor                      # Live-updating TUI dashboard
+```
+
+**Main command options:** `--tool`, `--directory`, `--project-directory`, `--dry-run`, `--init`, `--stories`, `--resume`, `--sandbox`, `--permission-mode`
+
+## Tmux Integration
+
+The monitor TUI supports tmux split panes for live log viewing. Requirements:
+- tmux must be installed (`brew install tmux`)
+- The monitor must be started inside a tmux session (`tmux new -s agent-cli`)
+- Press `l` on a project to open a split pane with `tail -f .agent-output.log`
+- Press `L` to close all log panes
+- Falls back to inline log view when tmux is not available
 
 ## Conventions
 
