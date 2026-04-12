@@ -11,11 +11,14 @@ const AGENT_OUTPUT_LOG = '.agent-output.log';
 /** Track which directories currently have open log panes */
 const openPanes = new Map<string, string>(); // directory -> paneId
 
+/** Env var set when monitor auto-starts a tmux session */
+const TMUX_AUTO_ENV = 'AGENT_CLI_TMUX_AUTO';
+
 /**
  * Check if the process is running inside a tmux session
  */
 export function isInsideTmux(): boolean {
-  return !!process.env.TMUX && !!process.env.TERM?.startsWith('tmux');
+  return !!process.env.TMUX;
 }
 
 /**
@@ -64,7 +67,11 @@ export function ensureTmuxSession(): boolean {
     spawnSync('tmux', ['attach-session', '-t', 'agent-cli'], { stdio: 'inherit' });
   } else {
     // Create new session — this blocks until tmux exits
-    spawnSync('tmux', ['new-session', '-s', 'agent-cli', cmd, ...args], { stdio: 'inherit' });
+    // Set env var so the re-execed process knows it was auto-started
+    spawnSync('tmux', ['new-session', '-s', 'agent-cli', cmd, ...args], {
+      stdio: 'inherit',
+      env: { ...process.env, [TMUX_AUTO_ENV]: '1' },
+    });
   }
 
   // When tmux exits, exit the original process (it never rendered anything)
@@ -93,13 +100,23 @@ export function openLogPane(directory: string, projectName: string): string | nu
   }
 
   try {
-    // Split horizontally with a header showing the project name
-    const header = `\\033[1;36m── ${projectName} (agent log) ──\\033[0m`;
-    const cmd = `tmux split-pane -h "echo -e '${header}'; tail -f '${logPath}'"`;
-    execSync(cmd, { stdio: 'pipe' });
+    // Capture existing pane IDs before splitting
+    const before = new Set(
+      execSync("tmux list-panes -F '#{pane_id}'", { encoding: 'utf-8' }).trim().split('\n'),
+    );
 
-    // Get the pane ID of the newly created pane (last pane)
-    const paneId = execSync("tmux list-panes -F '#{pane_id}' -t !", { encoding: 'utf-8' }).trim();
+    // Split horizontally: -d keeps focus on monitor, -p 35 gives log pane 35% width
+    const header = `\\033[1;36m── ${projectName} (agent log) ──\\033[0m`;
+    execSync(
+      `tmux split-pane -h -d -p 35 "echo -e '${header}'; tail -f '${logPath}'"`,
+      { stdio: 'pipe' },
+    );
+
+    // Find the new pane by diffing pane IDs
+    const after = execSync("tmux list-panes -F '#{pane_id}'", { encoding: 'utf-8' }).trim().split('\n');
+    const paneId = after.find(id => !before.has(id));
+
+    if (!paneId) return null;
 
     openPanes.set(directory, paneId);
     return paneId;
@@ -143,4 +160,19 @@ export function closeAllLogPanes(): number {
  */
 export function getOpenPaneDirectories(): ReadonlySet<string> {
   return new Set(openPanes.keys());
+}
+
+/**
+ * Get the number of currently open log panes
+ */
+export function getOpenPaneCount(): number {
+  return openPanes.size;
+}
+
+/**
+ * Check if the monitor auto-started its own tmux session
+ * (as opposed to being manually started inside an existing tmux session)
+ */
+export function wasAutoStarted(): boolean {
+  return process.env[TMUX_AUTO_ENV] === '1';
 }

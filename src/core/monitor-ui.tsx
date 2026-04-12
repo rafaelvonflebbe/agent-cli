@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Box, Text, useInput, useApp, type Key } from 'ink';
 import type { ProjectStatus, UserStory } from './types.js';
 import { formatCost, POLL_INTERVAL_MS, pollAllProjects, loadStoriesForProject, readAgentLog } from './monitor-data.js';
-import { isInsideTmux, isTmuxAvailable, openLogPane, closeAllLogPanes, getOpenPaneDirectories } from './tmux.js';
+import { isInsideTmux, isTmuxAvailable, openLogPane, closeAllLogPanes, getOpenPaneDirectories, wasAutoStarted } from './tmux.js';
 
 type ViewMode = 'table' | 'detail' | 'logtable';
 type DetailSubView = 'stories' | 'logs';
@@ -207,7 +207,7 @@ export function MonitorApp() {
   const [detailLogs, setDetailLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [openPaneDirs, setOpenPaneDirs] = useState<ReadonlySet<string>>(new Set());
-  const [tmuxStatus, setTmuxStatus] = useState<'available' | 'no-session' | 'not-installed'>('available');
+  const [tmuxStatus, setTmuxStatus] = useState<'available' | 'auto-started' | 'no-session' | 'not-installed'>('available');
   const { exit } = useApp();
 
   // Detect tmux status on mount
@@ -216,6 +216,8 @@ export function MonitorApp() {
       setTmuxStatus('not-installed');
     } else if (!isInsideTmux()) {
       setTmuxStatus('no-session');
+    } else if (wasAutoStarted()) {
+      setTmuxStatus('auto-started');
     } else {
       setTmuxStatus('available');
     }
@@ -351,11 +353,15 @@ export function MonitorApp() {
   const now = new Date().toLocaleTimeString();
 
   // Build footer info
+  const paneCount = openPaneDirs.size;
+  const paneLabel = paneCount > 0 ? `${paneCount} pane${paneCount !== 1 ? 's' : ''}` : 'no panes';
   const tmuxInfo = tmuxStatus === 'available'
-    ? 'tmux on'
-    : tmuxStatus === 'no-session'
-      ? 'tmux: not in session (start inside tmux for split panes)'
-      : 'tmux: not installed';
+    ? `tmux: active (${paneLabel})`
+    : tmuxStatus === 'auto-started'
+      ? `tmux: auto-started (${paneLabel})`
+      : tmuxStatus === 'no-session'
+        ? 'tmux: not in session (start inside tmux for split panes)'
+        : 'tmux: not installed';
 
   return (
     <Box flexDirection="column" padding={1}>

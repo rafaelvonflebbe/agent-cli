@@ -264,9 +264,10 @@ program.addCommand(watchCommand);
 const monitorCommand = new Command('monitor');
 monitorCommand
   .description('Show live-updating status table for watched projects')
-  .action(async () => {
+  .option('--test-log', 'Write sample agent output to .agent-output.log for each watched project')
+  .action(async (options: { testLog?: boolean }) => {
     try {
-      const monitor = createMonitor();
+      const monitor = createMonitor(options.testLog);
       await monitor.start();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

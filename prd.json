@@ -169,6 +169,81 @@
       "passes": true,
       "notes": "Depends on US-043 for tmux auto-start. Key changes all in src/core/monitor-ui.tsx useInput handler (lines ~277-358).",
       "dependsOn": ["US-043"]
+    },
+    {
+      "id": "US-045",
+      "title": "Add tmux status indicator to monitor footer",
+      "description": "Show a clear visual indicator in the monitor footer when running inside tmux with split panes open. Display count of open panes and which projects have active log tails. Helps verify the tmux integration is working during testing.",
+      "acceptanceCriteria": [
+        "Footer shows 'tmux: active (N panes)' when inside tmux with N open split panes",
+        "Footer shows 'tmux: active (no panes)' when inside tmux but no panes open",
+        "Footer shows 'tmux: not installed' when tmux binary is not found",
+        "Footer shows 'tmux: auto-started' when monitor launched its own tmux session",
+        "Pane count updates in real time when panes are opened/closed",
+        "npm run build passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Test story for the tmux monitor integration. Pure UI change in monitor-ui.tsx footer section."
+    },
+    {
+      "id": "US-046",
+      "title": "Write test data to .agent-output.log for monitor testing",
+      "description": "Add a --test-log flag to the monitor command that generates fake agent output to .agent-output.log for each watched project. Writes timestamped entries simulating tool calls, text output, and iteration markers. This lets us test the tmux split pane and inline log view without running the full agent loop.",
+      "acceptanceCriteria": [
+        "Monitor command accepts --test-log flag",
+        "When --test-log is set, write sample entries to .agent-output.log for each watched project before starting the TUI",
+        "Sample data includes: iteration headers, tool call lines (Using: Read, Using: Edit, Using: Bash), text output, cost/duration summaries",
+        "Continue normal monitor startup after writing test data",
+        "npm run build passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Test story — lets us verify tmux split panes and inline log display work without needing to run a real agent iteration."
+    },
+    {
+      "id": "US-047",
+      "title": "Fix tmux split-pane stealing focus from monitor",
+      "description": "When opening a tmux split pane with Enter, the focus moves to the new pane. This breaks navigation — arrow keys, Esc, and Enter go to the tail process instead of the monitor. Fix by adding -d flag to tmux split-pane so focus stays on the monitor pane. Also use -P -F to get the pane ID directly instead of a separate list-panes call.",
+      "acceptanceCriteria": [
+        "tmux split-pane command uses -d flag to keep focus on the monitor pane",
+        "Use -P -F '#{pane_id}' to print new pane ID directly from split-pane (no separate list-panes call)",
+        "After opening a pane, arrow keys still navigate the monitor table",
+        "Esc closes panes correctly",
+        "No control character corruption in panes",
+        "npm run build passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Root cause: tmux split-pane without -d moves focus to the new pane. All keystrokes then go to tail -f instead of Ink. Fix is simply adding -d flag. The -P -F improvement is cosmetic — cleaner than the previous two-step list-panes approach."
+    },
+    {
+      "id": "US-048",
+      "title": "Add -p 35 to tmux split-pane so log pane uses 35% width",
+      "description": "The tmux split-pane currently uses default 50/50 split, which cramps the monitor table. Add -p 35 flag so the log pane takes 35% of the width and the monitor table gets 65%.",
+      "acceptanceCriteria": [
+        "tmux split-pane command includes -p 35 flag",
+        "Log pane takes ~35% of terminal width",
+        "Monitor table is clearly visible in the remaining 65%",
+        "npm run build passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Quick fix — just adding -p 35 to the split-pane command in openLogPane(). This ensures both the table and log are visible simultaneously."
+    },
+    {
+      "id": "US-049",
+      "title": "Fix isInsideTmux() TERM check blocking tmux detection",
+      "description": "isInsideTmux() requires TERM to start with 'tmux', but many tmux configs set TERM=xterm-256color or TERM=screen-256color. This causes the function to return false even inside tmux, so openLogPane() bails immediately. Fix by only checking process.env.TMUX.",
+      "acceptanceCriteria": [
+        "isInsideTmux() only checks process.env.TMUX, not TERM",
+        "openLogPane() uses before/after pane ID diffing instead of -P -F flags",
+        "tmux split-pane keeps -d and -p 35 flags",
+        "npm run build passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Two bugs: (1) TERM check too strict — TMUX env var alone is sufficient. (2) -P -F '#{pane_id}' unreliable with shell command arguments — replaced with before/after pane ID diffing."
     }
   ]
 }

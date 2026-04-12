@@ -6,6 +6,7 @@ import { createElement } from 'react';
 import { render } from 'ink';
 import { MonitorApp } from './monitor-ui.js';
 import { closeAllLogPanes, ensureTmuxSession } from './tmux.js';
+import { writeTestLogData, pollAllProjects } from './monitor-data.js';
 
 /**
  * ANSI escape sequences for terminal control
@@ -22,6 +23,11 @@ const ANSI = {
  */
 export class Monitor {
   private inkInstance: ReturnType<typeof render> | null = null;
+  private readonly testLog: boolean;
+
+  constructor(testLog = false) {
+    this.testLog = testLog;
+  }
 
   /**
    * Start the monitoring TUI
@@ -29,6 +35,14 @@ export class Monitor {
   async start(): Promise<void> {
     // Auto-start tmux session if available (re-execs inside tmux if needed)
     ensureTmuxSession();
+
+    // Write test log data if requested
+    if (this.testLog) {
+      const projects = await pollAllProjects();
+      for (const project of projects) {
+        writeTestLogData(project.directory);
+      }
+    }
 
     // Enter alternate screen buffer
     process.stdout.write(ANSI.enterAltScreen + ANSI.hideCursor);
@@ -69,6 +83,6 @@ export class Monitor {
 /**
  * Create and return a Monitor instance
  */
-export function createMonitor(): Monitor {
-  return new Monitor();
+export function createMonitor(testLog = false): Monitor {
+  return new Monitor(testLog);
 }
