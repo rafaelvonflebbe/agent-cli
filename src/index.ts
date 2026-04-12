@@ -3,6 +3,7 @@
  * Agent CLI - Main entry point
  */
 
+import dotenv from 'dotenv';
 import { Command } from 'commander';
 import { createConfig, isToolRegistered, getAvailableToolNames, type ToolType, type PermissionMode } from './core/config.js';
 import { runAgent } from './core/iterator.js';
@@ -22,6 +23,8 @@ import type { SandboxConfig } from './core/types.js';
 // Package info - use __dirname for ES modules compatibility
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = join(__filename, '..');
+// Load .env from agent-cli installation directory, not cwd (works with npm link)
+dotenv.config({ path: join(__dirname, '../.env') });
 const packagePath = join(__dirname, '../package.json');
 const packageJson = JSON.parse(readFileSync(packagePath, 'utf-8'));
 
@@ -41,15 +44,16 @@ program
   .option('--directory <path>', 'Working directory containing prd.json', process.cwd())
   .option('--dry-run', 'Simulate iterations without spawning tools')
   .option('--init', 'Bootstrap agent-cli files in the target directory and exit')
+  .option('--project-directory <path>', 'Project directory where the AI tool works (cwd for spawned process). Defaults to --directory')
   .option('--stories <number>', 'Maximum number of stories to complete per run')
   .option('--resume', 'Resume from a previous interrupted session')
   .option('--sandbox', 'Run AI tool inside a Docker container for isolation')
   .option('--permission-mode <mode>', 'Permission mode: scoped (default, allowlisted tools only) or yolo (skip all permissions, full access)', 'scoped')
-  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; stories?: string; resume?: boolean; sandbox?: boolean; permissionMode: string }) => {
+  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; projectDirectory?: string; stories?: string; resume?: boolean; sandbox?: boolean; permissionMode: string }) => {
     try {
       // Handle --init mode
       if (options.init) {
-        await runInit(options.directory);
+        await runInit(options.directory, options.projectDirectory);
         process.exit(0);
       }
 
@@ -100,6 +104,7 @@ program
       const config = createConfig({
         tool: options.tool,
         directory: options.directory,
+        projectDirectory: options.projectDirectory,
         maxIterations,
         dryRun: options.dryRun,
         maxStories,
@@ -259,9 +264,10 @@ program.addCommand(watchCommand);
 const monitorCommand = new Command('monitor');
 monitorCommand
   .description('Show live-updating status table for watched projects')
-  .action(async () => {
+  .option('--test-log', 'Write sample agent output to .agent-output.log for each watched project')
+  .action(async (options: { testLog?: boolean }) => {
     try {
-      const monitor = createMonitor();
+      const monitor = createMonitor(options.testLog);
       await monitor.start();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

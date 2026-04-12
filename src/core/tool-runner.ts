@@ -9,6 +9,7 @@ import { getToolCommand, getPromptFile, getToolConfig, SCOPED_ALLOWED_TOOLS } fr
 import { join } from 'path';
 import { info, error, iterationHeader } from '../utils/logger.js';
 import { fileExistsSync } from '../utils/file-utils.js';
+import { formatDuration } from '../utils/format-utils.js';
 import chalk from 'chalk';
 
 const AGENT_OUTPUT_LOG = '.agent-output.log';
@@ -194,13 +195,15 @@ function createStreamEventHandler(logStream?: WriteStream) {
  */
 export class ToolRunner {
   private readonly directory: string;
+  private readonly projectDirectory: string;
   private readonly tool: ToolType;
   private readonly completionSignal: string;
   private readonly sandbox?: SandboxConfig;
   private readonly permissionMode: PermissionMode;
 
-  constructor(directory: string, tool: ToolType, completionSignal: string, sandbox?: SandboxConfig, permissionMode: PermissionMode = 'scoped') {
+  constructor(directory: string, tool: ToolType, completionSignal: string, sandbox?: SandboxConfig, permissionMode: PermissionMode = 'scoped', projectDirectory?: string) {
     this.directory = directory;
+    this.projectDirectory = projectDirectory || directory;
     this.tool = tool;
     this.completionSignal = completionSignal;
     this.sandbox = sandbox;
@@ -243,7 +246,7 @@ export class ToolRunner {
         'run',
         '--rm',
         '-i', // interactive: keep stdin open for prompt piping
-        '-v', `${this.directory}:/workspace`,
+        '-v', `${this.projectDirectory}:/workspace`,
         '--user', `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
       ];
 
@@ -268,7 +271,7 @@ export class ToolRunner {
 
     // Spawn the process
     const proc = spawn(spawnCommand, spawnArgs, {
-      cwd: this.directory,
+      cwd: this.projectDirectory,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
     });
@@ -333,7 +336,7 @@ export class ToolRunner {
           logStream.write(`Cost: $${totalCostUsd.toFixed(4)}\n`);
         }
         if (durationMs !== undefined) {
-          logStream.write(`Duration: ${(durationMs / 1000).toFixed(1)}s\n`);
+          logStream.write(`Duration: ${formatDuration(durationMs)}\n`);
         }
         logStream.end();
 
@@ -346,7 +349,7 @@ export class ToolRunner {
           info(`Cost: $${totalCostUsd.toFixed(4)}`);
         }
         if (durationMs !== undefined) {
-          info(`Duration: ${(durationMs / 1000).toFixed(1)}s`);
+          info(`Duration: ${formatDuration(durationMs)}`);
         }
 
         const result: ToolResult = {
@@ -383,7 +386,8 @@ export class ToolRunner {
    * This is read by Claude Code when --allowedTools is used.
    */
   private ensureSettingsJson(): void {
-    const claudeDir = join(this.directory, '.claude');
+    // Write to projectDirectory so the spawned Claude Code (cwd=projectDirectory) can find it
+    const claudeDir = join(this.projectDirectory, '.claude');
     const settingsPath = join(claudeDir, 'settings.json');
 
     if (fileExistsSync(settingsPath)) {
@@ -444,7 +448,8 @@ export function createToolRunner(
   tool: ToolType,
   completionSignal: string,
   sandbox?: SandboxConfig,
-  permissionMode: PermissionMode = 'scoped'
+  permissionMode: PermissionMode = 'scoped',
+  projectDirectory?: string
 ): ToolRunner {
-  return new ToolRunner(directory, tool, completionSignal, sandbox, permissionMode);
+  return new ToolRunner(directory, tool, completionSignal, sandbox, permissionMode, projectDirectory);
 }

@@ -3,6 +3,7 @@
  */
 
 import type { AgentConfig } from './types.js';
+import { resolve } from 'path';
 import { createPRDManager, PRDManager } from './prd.js';
 import { createArchiver, Archiver } from './archiver.js';
 import { createToolRunner, ToolRunner } from './tool-runner.js';
@@ -12,6 +13,8 @@ import { info, success, error, warn, iterationHeader } from '../utils/logger.js'
 import { appendText } from '../utils/file-utils.js';
 import { captureGitStatus, diffGitStatus, displayFileChanges, branchExists, getCurrentBranch } from '../utils/git-utils.js';
 import type { FileChange } from '../utils/git-utils.js';
+import { notifyStoryComplete, isTelegramConfigured } from './telegram.js';
+import { formatDuration } from '../utils/format-utils.js';
 import chalk from 'chalk';
 import { join } from 'path';
 
@@ -19,16 +22,17 @@ import { join } from 'path';
  * Agent Iterator class
  */
 export class AgentIterator {
-  private readonly config: AgentConfig;
+  private config: AgentConfig;
   private readonly prdManager: PRDManager;
   private readonly archiver: Archiver;
-  private readonly toolRunner: ToolRunner;
+  private toolRunner: ToolRunner;
   private readonly sessionManager: SessionManager;
   private readonly progressFilePath: string;
   private iterationCount: number = 0;
   private storiesCompletedThisRun: number = 0;
   private branchName: string = '';
   private sessionCompletedIds: string[] = [];
+  private sessionStartTime: number = 0;
 
   constructor(config: AgentConfig) {
     validateConfig(config);
@@ -40,7 +44,8 @@ export class AgentIterator {
       config.tool,
       config.completionSignal,
       config.sandbox,
-      config.permissionMode
+      config.permissionMode,
+      config.projectDirectory
     );
     this.sessionManager = createSessionManager(config.directory);
     this.progressFilePath = join(config.directory, 'progress.log');
@@ -55,6 +60,8 @@ export class AgentIterator {
     const storiesLimit = this.config.maxStories ? ` - Stories limit: ${this.config.maxStories}` : '';
     info(`Starting Agent CLI [${mode}] - Tool: ${this.config.tool} - Max iterations: ${this.config.maxIterations}${sandboxInfo}${storiesLimit}`);
 
+    this.sessionStartTime = Date.now();
+
     // Check if PRD exists
     if (!this.prdManager.exists()) {
       throw new Error(`PRD file not found in ${this.config.directory}`);
@@ -63,11 +70,29 @@ export class AgentIterator {
     // Load PRD
     await this.prdManager.load();
     this.branchName = this.prdManager.getBranchName();
+
+    // Resolve projectDirectory from PRD (overrides config if set)
+    const prdProjectDir = this.prdManager.getPRD().projectDirectory;
+    if (prdProjectDir) {
+      const resolved = resolve(this.config.directory, prdProjectDir);
+      this.config = { ...this.config, projectDirectory: resolved };
+      this.toolRunner = createToolRunner(
+        this.config.directory,
+        this.config.tool,
+        this.config.completionSignal,
+        this.config.sandbox,
+        this.config.permissionMode,
+        resolved
+      );
+      info(`Project directory: ${resolved}`);
+    }
+
     info(`Project: ${this.prdManager.getProjectName()}`);
     info(`Branch: ${this.branchName}`);
 
-    // Check if the branch still exists
-    const exists = await branchExists(this.branchName, this.config.directory);
+    // Check if the branch still exists (use projectDirectory for git operations when set)
+    const gitDir = this.config.projectDirectory || this.config.directory;
+    const exists = await branchExists(this.branchName, gitDir);
     if (!exists) {
       const newBranch = await this.handleStaleBranch(this.branchName);
       if (!newBranch) {
@@ -80,7 +105,7 @@ export class AgentIterator {
     await this.archiver.initialize(this.branchName);
 
     // Detect branch change: compare prd.json branchName with actual git branch
-    const currentBranch = await getCurrentBranch(this.config.directory);
+    const currentBranch = await getCurrentBranch(gitDir);
     if (currentBranch && currentBranch !== this.branchName) {
       await this.handleBranchChange(this.branchName, currentBranch);
     }
@@ -122,7 +147,9 @@ export class AgentIterator {
         const targetStory = this.prdManager.getStatus().nextStory;
 
         // Capture git status before live iterations (skip in dry-run)
-        const gitBefore = this.config.dryRun ? null : await captureGitStatus(this.config.directory);
+        // Use projectDirectory for git ops when set (that's where the AI tool makes changes)
+        const gitWorkDir = this.config.projectDirectory || this.config.directory;
+        const gitBefore = this.config.dryRun ? null : await captureGitStatus(gitWorkDir);
 
         if (this.config.dryRun) {
           await this.runDryIteration(i);
@@ -135,7 +162,7 @@ export class AgentIterator {
 
         // Detect and accumulate file changes (live mode only)
         if (!this.config.dryRun && gitBefore) {
-          const gitAfter = await captureGitStatus(this.config.directory);
+          const gitAfter = await captureGitStatus(gitWorkDir);
           iterationChanges = diffGitStatus(gitBefore, gitAfter);
           displayFileChanges(iterationChanges);
 
@@ -161,6 +188,17 @@ export class AgentIterator {
               });
               const changes = storyChanges.get(story.id) || [];
               await this.displayStoryReport(story, changes);
+
+              // Send Telegram notification (optional, no-op if not configured)
+              const sent = await notifyStoryComplete(this.prdManager.getProjectName(), story, changes);
+              if (isTelegramConfigured()) {
+                await this.logProgress(
+                  sent
+                    ? `Telegram notification sent for story ${story.id}`
+                    : `Telegram notification FAILED for story ${story.id}`,
+                );
+              }
+
               storyChanges.delete(story.id);
             }
           }
@@ -185,10 +223,13 @@ export class AgentIterator {
         // Check if stories limit has been reached
         if (this.config.maxStories && this.storiesCompletedThisRun >= this.config.maxStories) {
           const status = this.prdManager.getStatus();
+          const totalDuration = formatDuration(Date.now() - this.sessionStartTime);
           info(`Stories limit reached: ${this.storiesCompletedThisRun}/${this.config.maxStories} stories completed this run.`);
+          info(`Total session time: ${totalDuration}`);
           await this.logProgress(
             `STORIES LIMIT REACHED — ${this.storiesCompletedThisRun}/${this.config.maxStories} stories completed this run. ` +
-            `Overall progress: ${status.completed}/${status.total} stories complete.`
+            `Overall progress: ${status.completed}/${status.total} stories complete. ` +
+            `Total session time: ${totalDuration}`
           );
           return;
         }
@@ -229,13 +270,16 @@ export class AgentIterator {
     }
 
     // Max iterations reached without completion
+    const totalDuration = formatDuration(Date.now() - this.sessionStartTime);
     warn(`Max iterations (${this.config.maxIterations}) reached without completing all tasks.`);
     const finalStatus = this.prdManager.getStatus();
     info(`Final progress: ${finalStatus.completed}/${finalStatus.total} stories complete.`);
+    info(`Total session time: ${totalDuration}`);
     info('Check progress.log for details.');
     await this.logProgress(
       `WARNING: Max iterations (${this.config.maxIterations}) reached without completion. ` +
-      `Final progress: ${finalStatus.completed}/${finalStatus.total} stories complete.`
+      `Final progress: ${finalStatus.completed}/${finalStatus.total} stories complete. ` +
+      `Total session time: ${totalDuration}`
     );
   }
 
@@ -293,9 +337,11 @@ export class AgentIterator {
    */
   private async handleComplete(): Promise<void> {
     const finalStatus = this.prdManager.getStatus();
+    const totalDuration = formatDuration(Date.now() - this.sessionStartTime);
     success('All tasks completed!');
     success(`Completed at iteration ${this.iterationCount} of ${this.config.maxIterations}`);
     info(`Total stories: ${finalStatus.total} | Completed: ${finalStatus.completed}`);
+    info(`Total session time: ${totalDuration}`);
     if (this.config.maxStories) {
       info(`Stories completed this run: ${this.storiesCompletedThisRun}/${this.config.maxStories}`);
     }
@@ -304,7 +350,8 @@ export class AgentIterator {
     await this.logProgress(
       `ALL COMPLETE — Finished at iteration ${this.iterationCount}/${this.config.maxIterations}. ` +
       `Total stories: ${finalStatus.total}, Completed: ${finalStatus.completed}` +
-      (this.config.maxStories ? `, This run: ${this.storiesCompletedThisRun}/${this.config.maxStories}` : '')
+      (this.config.maxStories ? `, This run: ${this.storiesCompletedThisRun}/${this.config.maxStories}` : '') +
+      `. Total session time: ${totalDuration}`
     );
   }
 
@@ -322,8 +369,9 @@ export class AgentIterator {
     // Initialize progress file so we can log to it
     await this.archiver.initProgressFile(branchName);
 
-    // Detect current branch
-    const currentBranch = await getCurrentBranch(this.config.directory);
+    // Detect current branch (use projectDirectory for git operations)
+    const gitDir = this.config.projectDirectory || this.config.directory;
+    const currentBranch = await getCurrentBranch(gitDir);
 
     if (!currentBranch) {
       // Detached HEAD — cannot continue

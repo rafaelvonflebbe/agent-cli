@@ -76,6 +76,10 @@
           }
         }
       }
+    },
+    "projectDirectory": {
+      "type": "string",
+      "description": "Path to the project directory where the AI tool works (cwd for the spawned process). If omitted, defaults to the directory containing prd.json."
     }
   }
 }

@@ -1,12 +1,12 @@
 # Agent CLI
 
-An autonomous loop that uses AI tools (amp or claude) to implement user stories defined in a PRD (`prd.json`). It runs iterations until all stories are complete or the iteration limit is reached.
+An autonomous loop that uses AI tools (claude or openclaude) to implement user stories defined in a PRD (`prd.json`). It runs iterations until all stories are complete or the iteration limit is reached.
 
 ## How it works
 
 1. You create a `prd.json` file in your project directory with the user stories to implement
 2. Agent CLI reads the PRD, finds the highest priority story with `passes: false`
-3. It invokes the AI tool (amp or claude), feeding it instructions from `CLAUDE.md` (or `prompt.md`)
+3. It invokes the AI tool (claude or openclaude), feeding it instructions from `agent-cli.md`
 4. The AI tool implements the story and, upon completion, sets `passes: true` in the PRD
 5. The loop repeats for the next story
 6. When all stories are complete, the AI tool emits `<promise>COMPLETE</promise>` and the loop ends
@@ -19,6 +19,11 @@ npm run build
 npm link  # Optional: to use `agent-cli` globally
 ```
 
+### Optional dependencies
+
+- **tmux** — for live split-pane log viewing in the monitor. Install with `brew install tmux`
+- **Docker** — for sandboxed execution via `--sandbox`
+
 ## Basic usage
 
 ```bash
@@ -29,23 +34,98 @@ agent-cli
 agent-cli --tool claude 15
 
 # Point to another directory
-agent-cli --directory /path/to/project --tool amp 10
+agent-cli --directory /path/to/project --tool claude 10
+
+# Initialize a new project with template files
+agent-cli --init --directory /path/to/project
 ```
+
+### Options
 
 | Option | Description | Default |
 |--------|-------------|---------|
 | `[max_iterations]` | Maximum number of iterations | `10` |
-| `--tool <amp\|claude>` | AI tool to use | `claude` |
-| `--directory <path>` | Working directory | Current directory |
-| `--dry-run` | Simulates the loop without spawning external tools | `false` |
+| `--tool <tool>` | AI tool to use (`claude`, `openclaude`) | `claude` |
+| `--directory <path>` | Directory containing `prd.json` | Current directory |
+| `--project-directory <path>` | Directory where the AI tool works (cwd for spawned process) | Same as `--directory` |
+| `--dry-run` | Simulate iterations without spawning tools | `false` |
+| `--init` | Bootstrap template files and exit | `false` |
+| `--stories <n>` | Max stories to complete per run | All |
+| `--resume` | Resume from a previous interrupted session | `false` |
+| `--sandbox` | Run AI tool inside a Docker container | `false` |
+| `--permission-mode <mode>` | `scoped` (allowlisted tools) or `yolo` (full access) | `scoped` |
+
+## CLI Commands
+
+```bash
+agent-cli [options]                    # Run the agent loop
+agent-cli status [-d <path>]           # Show completed/pending stories
+agent-cli watch --add <path>           # Add a project to the watch list
+agent-cli watch --remove <path>        # Remove a project from the watch list
+agent-cli watch                        # List watched directories
+agent-cli monitor                      # Live-updating dashboard (TUI)
+```
+
+## Monitor TUI
+
+The monitor is a full-screen terminal UI that shows the status of all watched projects in real time.
+
+```bash
+# Add projects to watch
+agent-cli watch --add /path/to/project-a
+agent-cli watch --add /path/to/project-b
+
+# Start the monitor
+agent-cli monitor
+```
+
+### Keyboard controls
+
+| Key | Action |
+|-----|--------|
+| Up/Down | Navigate projects |
+| Enter | Open live log view (tmux split pane or inline) |
+| Esc | Close all tmux log panes |
+| `s` | Open detail view (stories) |
+| `t` | Return to table view |
+| `q` | Quit monitor |
+
+### Tmux split panes
+
+For the best experience, run the monitor inside tmux to get split-pane log viewing:
+
+```bash
+# Install tmux (macOS)
+brew install tmux
+
+# Start a tmux session
+tmux new -s agent-cli
+
+# Inside tmux, launch the monitor
+agent-cli monitor
+
+# Press Enter on a project — opens a split pane with tail -f .agent-output.log
+# Press Esc — closes all log panes
+```
+
+When tmux is not available or the monitor is not inside a tmux session, pressing `Enter` shows an inline log view with the last 50 lines refreshed every 2 seconds.
+
+## Notifications (Telegram)
+
+Agent CLI can send Telegram notifications when a story is completed. Configure via `.env` in the agent-cli install directory:
+
+```env
+TELEGRAM_TOKEN=123456:ABC-DEF
+TELEGRAM_CHAT_ID=987654321
+```
+
+Notifications include the story title, ID, and a summary of file changes. If the env vars are not set, notifications are silently skipped.
 
 ## Using in another project
 
-To use Agent CLI in your own project, you need **two files** in the project directory:
+You need **two files** in the project directory:
 
 ### 1. `prd.json` — Required
-
-Defines the stories that the AI should implement:
 
 ```json
 {
@@ -64,17 +144,6 @@ Defines the stories that the AI should implement:
       "priority": 1,
       "passes": false,
       "notes": ""
-    },
-    {
-      "id": "US-002",
-      "title": "Add integration tests",
-      "description": "Tests for the login endpoint",
-      "acceptanceCriteria": [
-        "Tests cover success and failure cases"
-      ],
-      "priority": 2,
-      "passes": false,
-      "notes": ""
     }
   ]
 }
@@ -83,53 +152,22 @@ Defines the stories that the AI should implement:
 **Fields:**
 - `priority`: lower number = higher priority (runs first)
 - `passes`: `false` = pending, `true` = completed
+- `dependsOn`: optional array of story IDs that must be completed first
 - `branchName`: when changed, Agent CLI automatically archives the previous run
 
-### 2. `CLAUDE.md` or `prompt.md` — Required
+### 2. `agent-cli.md` — Required
 
-Instructions that the AI tool will receive. Use `CLAUDE.md` for claude, `prompt.md` for amp.
-
-The file should instruct the AI to:
-1. Read `prd.json`
-2. Pick the highest priority story where `passes: false`
-3. Implement that story
-4. If tests pass, update `passes: true` in the PRD
-5. If all stories are complete, emit `<promise>COMPLETE</promise>`
-
-Minimal `CLAUDE.md` example:
-
-```markdown
-You are a development agent.
-
-1. Read prd.json
-2. Pick the highest priority story where passes: false
-3. Implement that story
-4. If it works, update passes: true in prd.json
-5. If all stories are complete, respond: <promise>COMPLETE</promise>
-```
-
-### Complete example
+Instructions that the AI tool receives. Or use `--init` to generate a template:
 
 ```bash
-# In your project
-cd /my-project
-
-# Make sure the files exist
-ls prd.json CLAUDE.md
-
-# Run with claude
-agent-cli --tool claude 20
-
-# Or run with amp
-agent-cli --tool amp 10
-
-# Simulate the loop without spawning tools (for testing)
-agent-cli --dry-run 5
+agent-cli --init --directory /path/to/project
 ```
+
+This creates `agent-cli.md`, `progress.log`, and a template `prd.json` (skipped if it already exists, auto-detects the current git branch).
 
 ## Auto-archiving
 
-When the `branchName` in the PRD changes between runs, Agent CLI archives the previous state in:
+When `branchName` in the PRD changes between runs, Agent CLI archives the previous state:
 
 ```
 archive/YYYY-MM-DD-feature-name/
@@ -137,18 +175,31 @@ archive/YYYY-MM-DD-feature-name/
   └── progress.log
 ```
 
-## Termination
+## Session persistence
 
-The loop ends when:
-- All stories have `passes: true`, OR
-- The maximum number of iterations is reached
+If the loop is interrupted, a `.session.json` file is saved with progress. Resume with:
+
+```bash
+agent-cli --resume
+```
+
+## File artifacts
+
+| File | Purpose |
+|------|---------|
+| `prd.json` | User stories and progress |
+| `agent-cli.md` | Prompt template for the AI tool |
+| `progress.log` | Timestamped iteration log |
+| `.agent-output.log` | Human-readable AI tool output (gitignored) |
+| `.session.json` | Session state for resume (gitignored) |
+| `~/.agent-cli/.watch.json` | Global list of watched directories |
 
 ## Development
 
-This project uses **Bun** as its primary runtime, which compiles and runs TypeScript natively with no separate build step.
+This project uses **Bun** as its primary runtime.
 
 ```bash
-npm run dev        # Run directly with Bun (recommended)
+npm run dev        # Run directly with Bun
 npm run build      # Bundle with bun build to dist/
 npm run build:old  # Build with tsgo (fallback)
 npm run build:tsc  # Build with standard tsc (fallback)

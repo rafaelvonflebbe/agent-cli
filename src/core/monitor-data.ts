@@ -7,7 +7,7 @@ import { createPRDManager } from './prd.js';
 import { createSessionManager } from './session.js';
 import { fileExists } from '../utils/file-utils.js';
 import { join } from 'path';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import type { ProjectStatus, UserStory } from './types.js';
 
 export const POLL_INTERVAL_MS = 2000;
@@ -122,4 +122,66 @@ export function readAgentLog(directory: string, lines: number = LOG_TAIL_LINES):
   } catch {
     return [];
   }
+}
+
+/**
+ * Write sample agent output to .agent-output.log for testing.
+ * Generates realistic-looking log entries simulating tool calls, text output,
+ * iteration markers, and cost/duration summaries.
+ */
+export function writeTestLogData(directory: string): void {
+  const logPath = join(directory, AGENT_OUTPUT_LOG);
+  const now = new Date().toISOString();
+
+  const lines = [
+    `--- Iteration 1/5 (claude) ---`,
+    `  Using: Read prd.json`,
+    `Let me read the PRD file to find the next story to implement.`,
+    ``,
+    `  Using: Read src/index.ts`,
+    `Now I need to understand the entry point of the application.`,
+    ``,
+    `  Using: Grep "function handleInput" src/`,
+    `  Using: Read src/core/iterator.ts`,
+    `I can see the iterator pattern is already in place. Let me implement the story.`,
+    ``,
+    `  Using: Edit src/core/monitor-ui.tsx`,
+    `  Using: Edit src/core/tmux.ts`,
+    `  Using: Bash npm run build`,
+    `Build passed successfully.`,
+    ``,
+    `  Using: Edit prd.json`,
+    `All acceptance criteria met. Marking story as complete.`,
+    ``,
+    `Cost: $0.0423`,
+    `Duration: 3m 12s`,
+    ``,
+    `--- Iteration 2/5 (claude) ---`,
+    `  Using: Read prd.json`,
+    `Loading PRD to find next incomplete story.`,
+    ``,
+    `  Using: Read src/core/monitor-data.ts`,
+    `  Using: Grep "POLL_INTERVAL" src/`,
+    `  Using: Edit src/core/monitor-data.ts`,
+    `  Using: Bash npm run build`,
+    ``,
+    `Cost: $0.0298`,
+    `Duration: 2m 45s`,
+    ``,
+    `--- Iteration 3/5 (claude) ---`,
+    `  Using: Read prd.json`,
+    `  Using: Read src/core/monitor-ui.tsx`,
+    `  Using: Edit src/core/monitor-ui.tsx`,
+    `  Using: Bash npm run build`,
+    `  Using: Edit prd.json`,
+    `Story complete. Moving to next.`,
+    ``,
+    `Cost: $0.0187`,
+    `Duration: 1m 58s`,
+    ``,
+    `# Test log generated at ${now}`,
+  ];
+
+  const content = lines.join('\n') + '\n';
+  writeFileSync(logPath, content, 'utf-8');
 }
