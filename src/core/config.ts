@@ -3,6 +3,16 @@
  */
 
 import type { AgentConfig, ToolType, ToolConfig, SandboxConfig, PermissionMode } from './types.js';
+import { createACPRegistry, type ACPProvider } from './acp-registry.js';
+
+/**
+ * Create a fresh ACP registry instance for synchronous lookups.
+ * Only includes built-in providers (not custom providers from disk).
+ * Use getACPRegistry() for the full async-loaded registry.
+ */
+function createACPRegistryFresh() {
+  return createACPRegistry();
+}
 
 export type { ToolType, ToolConfig, PermissionMode } from './types.js';
 
@@ -107,17 +117,41 @@ export function validateConfig(config: AgentConfig): void {
 }
 
 /**
- * Check if a tool name is registered
+ * Check if a tool name is registered (legacy registry or ACP provider)
  */
 export function isToolRegistered(tool: string): boolean {
-  return tool in TOOL_REGISTRY;
+  if (tool in TOOL_REGISTRY) return true;
+  // Also check ACP providers — synchronous check via fresh instance
+  const registry = createACPRegistryFresh();
+  return registry.hasProvider(tool);
 }
 
 /**
- * Get the list of available (registered) tool names
+ * Get the list of available (registered) tool names including ACP providers
  */
 export function getAvailableToolNames(): string[] {
-  return Object.keys(TOOL_REGISTRY);
+  const legacy = Object.keys(TOOL_REGISTRY);
+  const registry = createACPRegistryFresh();
+  const acpNames = registry.getProviderNames().filter(n => !legacy.includes(n));
+  return [...legacy, ...acpNames];
+}
+
+/**
+ * Check if a tool name refers to an ACP provider (not a legacy tool)
+ */
+export function isACPProvider(tool: string): boolean {
+  if (tool in TOOL_REGISTRY) return false;
+  const registry = createACPRegistryFresh();
+  return registry.hasProvider(tool);
+}
+
+/**
+ * Get the ACP provider for a tool name.
+ * Returns undefined if the tool is a legacy tool or not found.
+ */
+export function getACPProvider(tool: string): ACPProvider | undefined {
+  const registry = createACPRegistryFresh();
+  return registry.getProvider(tool);
 }
 
 /**

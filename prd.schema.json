@@ -80,6 +80,41 @@
     "projectDirectory": {
       "type": "string",
       "description": "Path to the project directory where the AI tool works (cwd for the spawned process). If omitted, defaults to the directory containing prd.json."
+    },
+    "mcpServers": {
+      "type": "array",
+      "description": "MCP servers to attach to ACP sessions for this project.",
+      "items": {
+        "type": "object",
+        "required": ["name", "command", "args"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Human-readable name for this MCP server",
+            "minLength": 1
+          },
+          "command": {
+            "type": "string",
+            "description": "Command to launch the MCP server",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "description": "Arguments for the MCP server command",
+            "items": {
+              "type": "string"
+            }
+          },
+          "env": {
+            "type": "object",
+            "description": "Environment variables to set when launching the MCP server",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      }
     }
   }
 }

@@ -1,6 +1,6 @@
 # Agent CLI
 
-An autonomous loop that uses AI tools (claude or openclaude) to implement user stories defined in a PRD (`prd.json`). It runs iterations until all stories are complete or the iteration limit is reached.
+An autonomous loop that uses AI tools to implement user stories defined in a PRD (`prd.json`). It runs iterations until all stories are complete or the iteration limit is reached. Supports both legacy subprocess mode (claude/openclaude) and ACP (Agent Client Protocol) for structured multi-agent communication.
 
 ## How it works
 
@@ -23,6 +23,7 @@ npm link  # Optional: to use `agent-cli` globally
 
 - **tmux** — for live split-pane log viewing in the monitor. Install with `brew install tmux`
 - **Docker** — for sandboxed execution via `--sandbox`
+- **ACP adapters** — for multi-agent support. Install as needed: `npm install -g @agentclientprotocol/claude-agent-acp`, `npm install -g @zed-industries/codex-acp`, etc.
 
 ## Basic usage
 
@@ -32,6 +33,10 @@ agent-cli
 
 # Specify tool and maximum iterations
 agent-cli --tool claude 15
+
+# Use an ACP provider (Codex, Copilot, Gemini)
+agent-cli --tool codex 10
+agent-cli --tool gemini 10
 
 # Point to another directory
 agent-cli --directory /path/to/project --tool claude 10
@@ -45,7 +50,7 @@ agent-cli --init --directory /path/to/project
 | Option | Description | Default |
 |--------|-------------|---------|
 | `[max_iterations]` | Maximum number of iterations | `10` |
-| `--tool <tool>` | AI tool to use (`claude`, `openclaude`) | `claude` |
+| `--tool <tool>` | AI tool to use (`claude`, `openclaude`, `codex`, `copilot`, `gemini`, or custom ACP provider) | `claude` |
 | `--directory <path>` | Directory containing `prd.json` | Current directory |
 | `--project-directory <path>` | Directory where the AI tool works (cwd for spawned process) | Same as `--directory` |
 | `--dry-run` | Simulate iterations without spawning tools | `false` |
@@ -183,16 +188,83 @@ If the loop is interrupted, a `.session.json` file is saved with progress. Resum
 agent-cli --resume
 ```
 
+For ACP providers, the session ID is saved and the agent's full context is restored on resume (via LoadSession). If the session has expired, a new session is created with a summary of previous progress.
+
+## ACP (Agent Client Protocol)
+
+Agent CLI supports the Agent Client Protocol (ACP) for structured communication with AI agents via JSON-RPC 2.0 over stdio. When using an ACP provider, the tool communicates with structured events instead of scanning stdout.
+
+**Built-in ACP providers:**
+
+| Provider | `--tool` | ACP Adapter |
+|----------|----------|-------------|
+| Claude | `claude` | `@agentclientprotocol/claude-agent-acp` |
+| Codex | `codex` | `@zed-industries/codex-acp` |
+| Copilot | `copilot` | `@github/copilot --acp` |
+| Gemini | `gemini` | `@google/gemini-cli --acp` |
+
+**Custom providers** can be registered in `~/.agent-cli/providers.json`:
+
+```json
+{
+  "providers": [
+    {
+      "name": "my-agent",
+      "command": "npx",
+      "args": ["my-agent-acp"],
+      "capabilities": { "fs": true, "terminal": true }
+    }
+  ]
+}
+```
+
+### MCP Servers
+
+ACP sessions support attaching MCP (Model Context Protocol) servers for extensible tool access. MCP servers are configured at three levels (later overrides earlier):
+
+1. **Provider defaults** — built into each provider in the registry
+2. **PRD-level** — `mcpServers` field in `prd.json`
+3. **Project-level** — `.agent-cli/mcp-servers.json` in the working directory
+
+Example `mcpServers` in `prd.json`:
+```json
+{
+  "mcpServers": [
+    {
+      "name": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"]
+    }
+  ]
+}
+```
+
+Example `.agent-cli/mcp-servers.json`:
+```json
+{
+  "servers": [
+    {
+      "name": "database",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": { "DATABASE_URL": "postgresql://..." }
+    }
+  ]
+}
+```
+
 ## File artifacts
 
 | File | Purpose |
 |------|---------|
-| `prd.json` | User stories and progress |
+| `prd.json` | User stories, progress, and optional MCP server config |
 | `agent-cli.md` | Prompt template for the AI tool |
 | `progress.log` | Timestamped iteration log |
 | `.agent-output.log` | Human-readable AI tool output (gitignored) |
-| `.session.json` | Session state for resume (gitignored) |
+| `.session.json` | Session state for resume, includes ACP session ID (gitignored) |
+| `.agent-cli/mcp-servers.json` | Project-level MCP server overrides |
 | `~/.agent-cli/.watch.json` | Global list of watched directories |
+| `~/.agent-cli/providers.json` | Custom ACP provider definitions |
 
 ## Development
 

@@ -26,6 +26,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   idle: { label: 'IDLE', color: 'yellow' },
   done: { label: 'DONE', color: 'cyan' },
   stopped: { label: 'STOPPED', color: 'red' },
+  resumed: { label: 'RESUMED', color: 'magenta' },
 };
 
 function padCol(str: string, width: number): string {
@@ -40,6 +41,7 @@ function ProjectRow({ project, selected, hasLogPane }: { project: ProjectStatus;
   const sc = STATUS_CONFIG[project.status] ?? STATUS_CONFIG.stopped;
   const prefix = selected ? '\u276f ' : '  ';
   const logIndicator = hasLogPane ? '\u2588' : ' ';
+  const resumedIndicator = project.isResumed ? '\u21BB' : ' ';
   const row = [
     padCol(project.project, COL.project),
     padCol(project.branch, COL.branch),
@@ -51,10 +53,10 @@ function ProjectRow({ project, selected, hasLogPane }: { project: ProjectStatus;
   ].join('  ');
 
   if (selected) {
-    return <Text backgroundColor="blue" color="white" bold>{prefix}{row} {logIndicator}</Text>;
+    return <Text backgroundColor="blue" color="white" bold>{prefix}{row} {logIndicator}{resumedIndicator}</Text>;
   }
 
-  return <Text>{prefix}{row} <Text color="green">{logIndicator}</Text></Text>;
+  return <Text>{prefix}{row} <Text color="green">{logIndicator}</Text><Text color="magenta">{resumedIndicator}</Text></Text>;
 }
 
 /**
@@ -108,6 +110,7 @@ function DetailView({ project, stories, subView, logs }: {
         <Text color="gray">{project.branch}</Text>
         <Text> · </Text>
         <Text color={sc.color}>{sc.label}</Text>
+        {project.isResumed && <Text color="magenta"> · resumed</Text>}
         <Text> · </Text>
         <Text color={subView === 'stories' ? 'cyan' : 'gray'}>stories</Text>
         <Text color="gray">/</Text>
@@ -170,6 +173,7 @@ function InlineLogView({ project, logs }: { project: ProjectStatus; logs: string
     <Box flexDirection="column">
       <Box>
         <Text bold color="cyan">{project.project}</Text>
+        {project.isResumed && <Text color="magenta"> · resumed</Text>}
         <Text color="gray"> · agent log (inline)</Text>
       </Box>
       <Text>{' '}</Text>

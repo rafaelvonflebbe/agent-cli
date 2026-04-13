@@ -42,6 +42,8 @@ export interface PRD {
    * If omitted, defaults to the directory containing prd.json.
    */
   projectDirectory?: string;
+  /** MCP servers to attach to ACP sessions for this project */
+  mcpServers?: McpServerConfig[];
 }
 
 /**
@@ -154,6 +156,10 @@ export interface SessionState {
   tool: string;
   /** Branch name */
   branchName: string;
+  /** ACP session ID for resumption (set when using ACP providers) */
+  acpSessionId?: string;
+  /** Whether this session was resumed from a previous interrupted run */
+  isResumed?: boolean;
 }
 
 /**
@@ -200,6 +206,60 @@ export interface WatchConfig {
 }
 
 /**
+ * A configured MCP server in simplified agent-cli format.
+ * Uses Record<string, string> for env (more ergonomic than the ACP SDK's EnvVariable[]).
+ * Converted to the ACP SDK's McpServer format at session creation time.
+ */
+export interface McpServerConfig {
+  /** Human-readable name for this MCP server */
+  name: string;
+  /** Command to launch the MCP server (e.g. "npx") */
+  command: string;
+  /** Arguments for the MCP server command */
+  args: string[];
+  /** Environment variables to set when launching the MCP server */
+  env?: Record<string, string>;
+}
+
+/**
+ * Capabilities an ACP provider supports
+ */
+export interface ACPProviderCapabilities {
+  /** Whether the provider supports filesystem operations */
+  fs: boolean;
+  /** Whether the provider supports terminal/command execution */
+  terminal: boolean;
+}
+
+/**
+ * A registered ACP provider (agent adapter)
+ */
+export interface ACPProvider {
+  /** Unique provider name (e.g. "claude", "codex") — maps to --tool flag */
+  name: string;
+  /** Command to spawn the ACP adapter (e.g. "npx") */
+  command: string;
+  /** Arguments for the adapter command (e.g. ["@agentclientprotocol/claude-agent-acp"]) */
+  args: string[];
+  /** Capabilities this provider supports */
+  capabilities: ACPProviderCapabilities;
+  /** Default environment variables for the subprocess */
+  env?: Record<string, string>;
+  /** Optional install hint if the adapter is not found (e.g. "npm install -g @agentclientprotocol/claude-agent-acp") */
+  installHint?: string;
+  /** Default MCP servers to attach to every session created with this provider */
+  defaultMcpServers?: McpServerConfig[];
+}
+
+/**
+ * Custom providers config stored at ~/.agent-cli/providers.json
+ */
+export interface ProvidersConfig {
+  /** User-defined ACP providers */
+  providers: ACPProvider[];
+}
+
+/**
  * Runtime status of a watched project
  */
 export interface ProjectStatus {
@@ -213,10 +273,12 @@ export interface ProjectStatus {
   iteration: string;
   /** Story progress (e.g., "5/8") */
   stories: string;
-  /** Running status: running, idle, done, stopped */
-  status: 'running' | 'idle' | 'done' | 'stopped';
+  /** Running status: running, idle, done, stopped, resumed */
+  status: 'running' | 'idle' | 'done' | 'stopped' | 'resumed';
   /** Accumulated cost in USD */
   cost: number;
   /** Last activity timestamp */
   lastActivity: string;
+  /** Whether this project's session was resumed from a previous interrupted run */
+  isResumed?: boolean;
 }
