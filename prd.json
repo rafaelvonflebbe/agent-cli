@@ -158,7 +158,7 @@
         "npm run build passes"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "This solves the problem of having multiple copies of agent-cli.md that need to be updated independently. The global template is the default; per-project overrides are opt-in. Similar pattern to how providers.json works at ~/.agent-cli/providers.json."
     }
   ]

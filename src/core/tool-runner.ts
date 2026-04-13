@@ -5,11 +5,12 @@
 import { spawn } from 'child_process';
 import { createReadStream, createWriteStream, writeFileSync, mkdirSync, type WriteStream } from 'fs';
 import type { ToolResult, ToolType, SandboxConfig, PermissionMode } from './types.js';
-import { getToolCommand, getPromptFile, getToolConfig, SCOPED_ALLOWED_TOOLS } from './config.js';
+import { getToolCommand, getToolConfig, SCOPED_ALLOWED_TOOLS } from './config.js';
 import { join } from 'path';
 import { info, error, iterationHeader } from '../utils/logger.js';
 import { fileExistsSync } from '../utils/file-utils.js';
 import { formatDuration } from '../utils/format-utils.js';
+import { resolvePromptFile } from './prompt-resolver.js';
 import chalk from 'chalk';
 
 const AGENT_OUTPUT_LOG = '.agent-output.log';
@@ -221,7 +222,7 @@ export class ToolRunner {
     const logStream = createWriteStream(logPath, { flags: 'w' });
     logStream.write(`--- Iteration ${iteration}/${maxIterations} (${this.tool}) ---\n`);
 
-    const promptFile = join(this.directory, getPromptFile(this.tool));
+    const promptFile = await resolvePromptFile(this.directory);
 
     // Check if prompt file exists
     if (!fileExistsSync(promptFile)) {
@@ -262,11 +263,11 @@ export class ToolRunner {
 
       spawnCommand = 'docker';
       spawnArgs = dockerArgs;
-      info(`Running (sandboxed): docker ${dockerArgs.join(' ')} < ${getPromptFile(this.tool)}`);
+      info(`Running (sandboxed): docker ${dockerArgs.join(' ')} < ${promptFile}`);
     } else {
       spawnCommand = command;
       spawnArgs = args;
-      info(`Running: ${command} ${args.join(' ')} < ${getPromptFile(this.tool)}`);
+      info(`Running: ${command} ${args.join(' ')} < ${promptFile}`);
     }
 
     // Spawn the process

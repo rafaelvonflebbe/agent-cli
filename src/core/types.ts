@@ -112,6 +112,8 @@ export interface AgentConfig {
   sandbox?: SandboxConfig;
   /** Permission mode for the AI tool (default: 'scoped') */
   permissionMode?: PermissionMode;
+  /** Force ACP (Agent Client Protocol) mode instead of legacy spawn */
+  acp?: boolean;
 }
 
 /**

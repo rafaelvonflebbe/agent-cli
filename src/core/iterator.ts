@@ -21,6 +21,7 @@ import { createWriteStream, type WriteStream } from 'fs';
 import { createACPClient, type ACPClient, type ACPEvent, type ACPPromptResult } from './acp-client.js';
 import { getACPRegistry } from './acp-registry.js';
 import { resolveAcpMcpServers } from './mcp-config.js';
+import { resolvePromptFile } from './prompt-resolver.js';
 
 /**
  * Agent Iterator class
@@ -55,7 +56,7 @@ export class AgentIterator {
     this.config = config;
     this.prdManager = createPRDManager(config.directory);
     this.archiver = createArchiver(config.directory);
-    this.useACP = isACPProvider(config.tool);
+    this.useACP = config.acp === true || isACPProvider(config.tool);
 
     if (this.useACP) {
       // Placeholder tool runner — won't be used for ACP path
@@ -376,8 +377,8 @@ export class AgentIterator {
       await this.initializeACPClient();
     }
 
-    // Read the prompt file
-    const promptFile = join(this.config.directory, 'agent-cli.md');
+    // Read the prompt file (project-level or global fallback)
+    const promptFile = await resolvePromptFile(this.config.directory);
     const promptContent = await readText(promptFile);
 
     const sessionId = this.acpClient!.getSessionId() ?? undefined;

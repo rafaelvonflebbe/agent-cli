@@ -49,7 +49,8 @@ program
   .option('--resume', 'Resume from a previous interrupted session')
   .option('--sandbox', 'Run AI tool inside a Docker container for isolation')
   .option('--permission-mode <mode>', 'Permission mode: scoped (default, allowlisted tools only) or yolo (skip all permissions, full access)', 'scoped')
-  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; projectDirectory?: string; stories?: string; resume?: boolean; sandbox?: boolean; permissionMode: string }) => {
+  .option('--acp', 'Force ACP (Agent Client Protocol) mode instead of legacy spawn')
+  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; projectDirectory?: string; stories?: string; resume?: boolean; sandbox?: boolean; permissionMode: string; acp?: boolean }) => {
     try {
       // Handle --init mode
       if (options.init) {
@@ -111,6 +112,7 @@ program
         resume: options.resume,
         sandbox: options.sandbox ? { image: 'agent-cli-runner' } satisfies SandboxConfig : undefined,
         permissionMode,
+        acp: options.acp,
       });
 
       // Check for existing session
