@@ -214,7 +214,7 @@ export class ToolRunner {
   /**
    * Run the AI tool
    */
-  async run(iteration: number, maxIterations: number): Promise<ToolResult> {
+  async run(iteration: number, maxIterations: number, options?: { promptSuffix?: string }): Promise<ToolResult> {
     iterationHeader(iteration, maxIterations, this.tool);
 
     // Create log file for real-time agent output
@@ -277,9 +277,16 @@ export class ToolRunner {
       shell: false,
     });
 
-    // Stream the prompt file to stdin
+    // Stream the prompt file to stdin, optionally appending a directive suffix
     const promptStream = createReadStream(promptFile);
-    promptStream.pipe(proc.stdin!);
+    if (options?.promptSuffix) {
+      promptStream.pipe(proc.stdin!, { end: false });
+      promptStream.on('end', () => {
+        proc.stdin!.end(options.promptSuffix!);
+      });
+    } else {
+      promptStream.pipe(proc.stdin!);
+    }
 
     // Collect output
     let stdout = '';

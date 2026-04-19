@@ -311,7 +311,7 @@ export class AgentIterator {
         // Check if all target stories are complete (all stories when no --story filter)
         if (this.config.storyIds && this.config.storyIds.length > 0) {
           const allTargetsComplete = this.config.storyIds.every(id => {
-            const s = this.prdManager.getPRD().userStories.find(us => us.id === id);
+            const s = this.prdManager.getPRD().userStories.find(us => us.id.toLowerCase() === id.toLowerCase());
             return s?.passes === true;
           });
           if (allTargetsComplete) {
@@ -374,22 +374,29 @@ export class AgentIterator {
    */
   private validateTargetStories(ids: string[]): void {
     const prd = this.prdManager.getPRD();
-    const storyIds = new Set(prd.userStories.map(s => s.id));
+
+    // Case-insensitive lookup: lowercase -> canonical ID
+    const canonicalMap = new Map<string, string>();
+    for (const s of prd.userStories) {
+      canonicalMap.set(s.id.toLowerCase(), s.id);
+    }
 
     for (const id of ids) {
-      if (!storyIds.has(id)) {
-        throw new Error(`Story '${id}' not found in prd.json. Available: ${[...storyIds].join(', ')}`);
+      const canonicalId = canonicalMap.get(id.toLowerCase());
+      if (!canonicalId) {
+        throw new Error(`Story '${id}' not found in prd.json. Available: ${[...canonicalMap.values()].join(', ')}`);
       }
     }
 
     for (const id of ids) {
-      const story = prd.userStories.find(s => s.id === id)!;
+      const canonicalId = canonicalMap.get(id.toLowerCase())!;
+      const story = prd.userStories.find(s => s.id === canonicalId)!;
       const unmet = this.prdManager.getUnmetDependencies(story);
       if (unmet.length > 0) {
-        throw new Error(`Story '${id}' has unmet dependencies: ${unmet.join(', ')}`);
+        throw new Error(`Story '${canonicalId}' has unmet dependencies: ${unmet.join(', ')}`);
       }
       if (story.passes) {
-        warn(`Story '${id}' is already complete — will be skipped`);
+        warn(`Story '${canonicalId}' is already complete — will be skipped`);
       }
     }
   }
@@ -403,7 +410,7 @@ export class AgentIterator {
     if (this.config.storyIds && this.config.storyIds.length > 0) {
       const prd = this.prdManager.getPRD();
       for (const id of this.config.storyIds) {
-        const story = prd.userStories.find(s => s.id === id);
+        const story = prd.userStories.find(s => s.id.toLowerCase() === id.toLowerCase());
         if (story && !story.passes) {
           return story;
         }
@@ -412,6 +419,28 @@ export class AgentIterator {
       return undefined;
     }
     return this.prdManager.getStatus().nextStory;
+  }
+
+  /**
+   * Build a prompt directive telling the agent which story to work on.
+   * Returns null when --story is not set (let agent pick by priority).
+   */
+  private buildTargetDirective(): string | null {
+    if (!this.config.storyIds || this.config.storyIds.length === 0) return null;
+
+    const prd = this.prdManager.getPRD();
+    const storyLines = this.config.storyIds
+      .map(id => {
+        const story = prd.userStories.find(s => s.id.toLowerCase() === id.toLowerCase());
+        if (!story || story.passes) return null;
+        return `${story.id}: ${story.title}`;
+      })
+      .filter((line): line is string => line !== null);
+
+    if (storyLines.length === 0) return null;
+
+    const label = storyLines.length === 1 ? 'story' : 'stories';
+    return `\n\nIMPORTANT: Work ONLY on the following ${label} this iteration. Do NOT work on any other story regardless of priority.\n\n${storyLines.join('\n')}`;
   }
 
   /**
@@ -432,7 +461,8 @@ export class AgentIterator {
    * Run a single iteration via the legacy tool-runner (spawn + stdout)
    */
   private async runLegacyIteration(i: number): Promise<void> {
-    const result = await this.toolRunner.run(i, this.config.maxIterations);
+    const directive = this.buildTargetDirective();
+    const result = await this.toolRunner.run(i, this.config.maxIterations, directive ? { promptSuffix: directive } : undefined);
 
     // Handle tool execution errors
     if (result.exitCode === -1) {
@@ -461,7 +491,13 @@ export class AgentIterator {
 
     // Read the prompt file (project-level or global fallback)
     const promptFile = await resolvePromptFile(this.config.directory);
-    const promptContent = await readText(promptFile);
+    let promptContent = await readText(promptFile);
+
+    // Append target directive when --story is set
+    const directive = this.buildTargetDirective();
+    if (directive) {
+      promptContent += directive;
+    }
 
     const sessionId = this.acpClient!.getSessionId() ?? undefined;
     const startTime = Date.now();

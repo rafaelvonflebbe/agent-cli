@@ -73,7 +73,7 @@
         "npm run build passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "The prompt injection is the critical fix. Without it, --story only affects iterator tracking (headers, completion checks) but the agent ignores it. Add a buildTargetDirective(storyIds, stories) helper that generates the directive text. Inject it in runLiveIteration (legacy) and runACPIteration (ACP) before sending the prompt."
     }
   ]
