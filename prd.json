@@ -53,7 +53,7 @@
         "npm run build passes"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Inspired by Redux-like reducer pattern and AI SDK's internal state management. Current pain points: (1) session state updated in 4+ places in iterator.ts, (2) cost/duration tracked as instance fields separate from session file, (3) resumption reconstructs state from multiple sources. A reducer solves all three. Future: could enable undo/redo, time-travel debugging, and state snapshots for the monitor TUI."
     },
     {
@@ -75,6 +75,48 @@
       "priority": 3,
       "passes": true,
       "notes": "The prompt injection is the critical fix. Without it, --story only affects iterator tracking (headers, completion checks) but the agent ignores it. Add a buildTargetDirective(storyIds, stories) helper that generates the directive text. Inject it in runLiveIteration (legacy) and runACPIteration (ACP) before sending the prompt."
+    },
+    {
+      "id": "US-072",
+      "title": "Add --prompt flag for extra instructions and post-run commands",
+      "description": "Add a --prompt <text-or-path> CLI flag that appends extra instructions to the agent's prompt each iteration. Accepts either inline text or a path to a .md file. Detects automatically: if the value ends with .md and the file exists, read its content; otherwise treat as literal text. Multiple --prompt flags supported. Instructions are appended after the prompt file content and --story directive.",
+      "acceptanceCriteria": [
+        "CLI flag --prompt <text-or-path> added to main command",
+        "Multiple --prompt flags supported (each appends)",
+        "Auto-detect: if value ends with .md and file exists, read file content; otherwise use as literal text",
+        "Example text: agent-cli 5 --prompt 'after completing, commit and push'",
+        "Example file: agent-cli 5 --prompt ./instructions/post-run-tasks.md",
+        "Example mixed: agent-cli 5 --prompt ./ci-checks.md --prompt 'commit after each story'",
+        "Prompt content appended after the file content and --story directive",
+        "Works in both legacy path (tool-runner stdin) and ACP path (sendPrompt)",
+        "Error if specified .md file does not exist",
+        "Dry-run mode logs the extra prompt but does not execute it",
+        "Backward compatible: omitting --prompt keeps current behavior",
+        "npm run build passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Reuses the same prompt suffix injection pattern from US-071 (buildTargetDirective). Add a config.extraPrompt field (string[]) populated from --prompt flags. Append after the --story directive in both runLegacyIteration and runACPIteration. Common use cases: commit/push after stories, run tests, create PRs, notify via Slack."
+    },
+    {
+      "id": "US-073",
+      "title": "Track and report context window usage per iteration and session",
+      "description": "Capture token usage (input, output, cache read/write) from the agent's output and report context window utilization at the end of each iteration and when the session finishes. In the legacy path, Claude Code's stream-json format includes usage data in the result event (input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens). In the ACP path, usage events carry the same data. Calculate percentage of context used based on the model's known context window size and report it in the CLI output, progress.log, and .agent-output.log.",
+      "acceptanceCriteria": [
+        "Capture token counts from stream-json result event in legacy path (input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens)",
+        "Capture token counts from ACP usage events",
+        "Track cumulative tokens across iterations (session total input, output, cache)",
+        "Report per-iteration token usage in CLI output and .agent-output.log",
+        "Report session summary at end: total tokens, estimated context window % used, cache hit rate",
+        "Context window sizes mapped per model (Claude models: 200k, etc.)",
+        "Display format: 'Context: 45.2k/200k (22.6%) | Cache hit: 78%'",
+        "Token data persisted to .session.json for resume sessions",
+        "Backward compatible: if token data unavailable, skip reporting",
+        "npm run build passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Legacy path: the stream-json result event already has total_cost_usd and duration_ms — extend to also capture token fields. ACP path: usage events already emit to the event bus — aggregate them. Known context windows: claude-sonnet-4-6/claude-opus-4-7 = 200k tokens. This helps users understand when they're approaching context limits and plan story granularity accordingly."
     }
   ]
 }

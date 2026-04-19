@@ -7,7 +7,6 @@ import { resolve } from 'path';
 import { createPRDManager, PRDManager } from './prd.js';
 import { createArchiver, Archiver } from './archiver.js';
 import { createToolRunner, ToolRunner } from './tool-runner.js';
-import { createSessionManager, SessionManager } from './session.js';
 import { validateConfig, isACPProvider } from './config.js';
 import { info, success, error, warn, iterationHeader } from '../utils/logger.js';
 import { appendText, readText, isPathSafe } from '../utils/file-utils.js';
@@ -22,6 +21,7 @@ import { createACPClient, type ACPClient, type ACPEvent, type ACPPromptResult } 
 import { getACPRegistry } from './acp-registry.js';
 import { resolveAcpMcpServers } from './mcp-config.js';
 import { resolvePromptFile } from './prompt-resolver.js';
+import { SessionStore, createSessionStore, resumeSessionStore } from './session-reducer.js';
 
 /**
  * Agent Iterator class
@@ -31,25 +31,16 @@ export class AgentIterator {
   private readonly prdManager: PRDManager;
   private readonly archiver: Archiver;
   private toolRunner: ToolRunner;
-  private readonly sessionManager: SessionManager;
+  private store: SessionStore | null = null;
   private readonly progressFilePath: string;
-  private iterationCount: number = 0;
-  private storiesCompletedThisRun: number = 0;
-  private branchName: string = '';
-  private sessionCompletedIds: string[] = [];
-  private sessionStartTime: number = 0;
 
   /** ACP client fields — used when tool is an ACP provider */
   private readonly useACP: boolean;
   private acpClient: ACPClient | null = null;
   private acpLogStream: WriteStream | null = null;
-  private acpTotalCost: number = 0;
-  private acpTotalDuration: number = 0;
 
   /** SIGINT handler reference for cleanup */
   private sigintHandler: (() => void) | null = null;
-  /** Whether this run is a resumed ACP session */
-  private isResumedSession: boolean = false;
 
   constructor(config: AgentConfig) {
     validateConfig(config);
@@ -74,7 +65,6 @@ export class AgentIterator {
         config.projectDirectory,
       );
     }
-    this.sessionManager = createSessionManager(config.directory);
     this.progressFilePath = join(config.directory, 'progress.log');
   }
 
@@ -92,8 +82,6 @@ export class AgentIterator {
     const protocolInfo = this.useACP ? ' (ACP)' : '';
     info(`Starting Agent CLI [${mode}] - Tool: ${this.config.tool}${protocolInfo} - Max iterations: ${this.config.maxIterations}${sandboxInfo}${storiesLimit}`);
 
-    this.sessionStartTime = Date.now();
-
     // Check if PRD exists
     if (!this.prdManager.exists()) {
       throw new Error(`PRD file not found in ${this.config.directory}`);
@@ -101,7 +89,7 @@ export class AgentIterator {
 
     // Load PRD
     await this.prdManager.load();
-    this.branchName = this.prdManager.getBranchName();
+    const branchName = this.prdManager.getBranchName();
 
     // Validate --story IDs against PRD
     if (this.config.storyIds && this.config.storyIds.length > 0) {
@@ -129,49 +117,57 @@ export class AgentIterator {
     }
 
     info(`Project: ${this.prdManager.getProjectName()}`);
-    info(`Branch: ${this.branchName}`);
+    info(`Branch: ${branchName}`);
 
     // Check if the branch still exists (use projectDirectory for git operations when set)
     const gitDir = this.config.projectDirectory || this.config.directory;
-    const exists = await branchExists(this.branchName, gitDir);
+    const exists = await branchExists(branchName, gitDir);
     if (!exists) {
-      const newBranch = await this.handleStaleBranch(this.branchName);
+      const newBranch = await this.handleStaleBranch(branchName);
       if (!newBranch) {
         return; // Detached HEAD — cannot continue
       }
       // Auto-updated to new branch, continue below
     }
 
+    // Re-read branch name in case stale branch handler updated it
+    const effectiveBranch = this.prdManager.getBranchName();
+
     // Initialize archive system
-    await this.archiver.initialize(this.branchName);
+    await this.archiver.initialize(effectiveBranch);
 
     // Detect branch change: compare prd.json branchName with actual git branch
     const currentBranch = await getCurrentBranch(gitDir);
-    if (currentBranch && currentBranch !== this.branchName) {
-      await this.handleBranchChange(this.branchName, currentBranch);
+    if (currentBranch && currentBranch !== effectiveBranch) {
+      await this.handleBranchChange(effectiveBranch, currentBranch);
     }
 
-    // Handle session: create new or resume existing
+    // Handle session: create new or resume existing via SessionStore
     if (this.config.resume) {
-      const sessionExists = await this.sessionManager.exists();
-      if (!sessionExists) {
+      const resumed = await resumeSessionStore(this.config.directory);
+      if (!resumed) {
         warn('No previous session found. Starting fresh.');
-        await this.sessionManager.create(this.config.tool, this.branchName);
+        this.store = await createSessionStore(this.config.directory, this.config.tool, effectiveBranch);
       } else {
-        const session = await this.sessionManager.load();
-        this.sessionCompletedIds = session.completedStoryIds;
-        this.iterationCount = session.currentIteration;
+        this.store = resumed;
+        const state = this.store.getState();
+        const isACPResumed = this.useACP && !!state.acpSessionId;
 
-        // ACP session resumption: if we have an ACP session ID, use LoadSession
-        if (this.useACP && session.acpSessionId) {
-          this.isResumedSession = true;
-          info(`Resuming ACP session: ${this.sessionCompletedIds.length} stories already completed, ACP session ${session.acpSessionId}, starting at iteration ${this.iterationCount + 1}`);
+        await this.store.dispatch({
+          type: 'SESSION_RESUMED',
+          completedStoryIds: state.completedStoryIds,
+          iteration: state.currentIteration,
+          acpSessionId: state.acpSessionId,
+        });
+
+        if (isACPResumed) {
+          info(`Resuming ACP session: ${state.completedStoryIds.length} stories already completed, ACP session ${state.acpSessionId}, starting at iteration ${state.currentIteration + 1}`);
         } else {
-          info(`Resuming session: ${this.sessionCompletedIds.length} stories already completed, starting at iteration ${this.iterationCount + 1}`);
+          info(`Resuming session: ${state.completedStoryIds.length} stories already completed, starting at iteration ${state.currentIteration + 1}`);
         }
       }
     } else {
-      await this.sessionManager.create(this.config.tool, this.branchName);
+      this.store = await createSessionStore(this.config.directory, this.config.tool, effectiveBranch);
     }
 
     // Register SIGINT handler for graceful shutdown
@@ -181,9 +177,8 @@ export class AgentIterator {
     const storyChanges = new Map<string, FileChange[]>();
 
     // Main iteration loop (start from resumed iteration if applicable)
-    const startIteration = this.iterationCount + 1;
+    const startIteration = this.store.getState().currentIteration + 1;
     for (let i = startIteration; i <= this.config.maxIterations; i++) {
-      this.iterationCount = i;
 
       try {
         let iterationChanges: FileChange[] = [];
@@ -232,13 +227,7 @@ export class AgentIterator {
           const prd = this.prdManager.getPRD();
           for (const story of prd.userStories) {
             if (story.passes && !passesBefore.get(story.id)) {
-              this.storiesCompletedThisRun++;
-              this.sessionCompletedIds.push(story.id);
-              await this.sessionManager.update({
-                currentIteration: i,
-                completedStoryIds: [...this.sessionCompletedIds],
-                lastStoryId: story.id,
-              });
+              await this.store!.dispatch({ type: 'STORY_COMPLETED', storyId: story.id });
               const changes = storyChanges.get(story.id) || [];
               await this.displayStoryReport(story, changes);
 
@@ -262,26 +251,28 @@ export class AgentIterator {
           const prd = this.prdManager.getPRD();
           for (const story of prd.userStories) {
             if (story.passes && !passesBefore.get(story.id)) {
-              this.storiesCompletedThisRun++;
-              this.sessionCompletedIds.push(story.id);
-              await this.sessionManager.update({
-                currentIteration: i,
-                completedStoryIds: [...this.sessionCompletedIds],
-                lastStoryId: story.id,
-              });
+              await this.store!.dispatch({ type: 'STORY_COMPLETED', storyId: story.id });
             }
           }
         }
 
+        // Dispatch iteration finished (non-ACP paths — ACP dispatches inside runACPIteration)
+        if (!this.useACP) {
+          await this.store!.dispatch({ type: 'ITERATION_FINISHED', iteration: i });
+        }
+
+        const state = this.store.getState();
+
         // Check stopWhen conditions (after story completions, before maxStories)
         const stopResult = this.prdManager.shouldStop({
-          totalCostUsd: this.acpTotalCost > 0 ? this.acpTotalCost : undefined,
-          sessionDurationMs: Date.now() - this.sessionStartTime,
+          totalCostUsd: state.totalCostUsd && state.totalCostUsd > 0 ? state.totalCostUsd : undefined,
+          sessionDurationMs: Date.now() - (state.sessionStartTime ?? Date.now()),
         });
         if (stopResult.shouldStop) {
+          await this.store.dispatch({ type: 'STOPWHEN_TRIGGERED', reason: stopResult.reason ?? 'Unknown stopWhen condition' });
           await this.cleanupACP();
           const status = this.prdManager.getStatus();
-          const totalDuration = formatDuration(Date.now() - this.sessionStartTime);
+          const totalDuration = formatDuration(Date.now() - (state.sessionStartTime ?? Date.now()));
           warn(`stopWhen triggered: ${stopResult.reason}`);
           info(`Progress: ${status.completed}/${status.total} stories complete.`);
           info(`Total session time: ${totalDuration}`);
@@ -294,14 +285,15 @@ export class AgentIterator {
         }
 
         // Check if stories limit has been reached
-        if (this.config.maxStories && this.storiesCompletedThisRun >= this.config.maxStories) {
+        const storiesCompletedThisRun = state.storiesCompletedThisRun ?? 0;
+        if (this.config.maxStories && storiesCompletedThisRun >= this.config.maxStories) {
           await this.cleanupACP();
           const status = this.prdManager.getStatus();
-          const totalDuration = formatDuration(Date.now() - this.sessionStartTime);
-          info(`Stories limit reached: ${this.storiesCompletedThisRun}/${this.config.maxStories} stories completed this run.`);
+          const totalDuration = formatDuration(Date.now() - (state.sessionStartTime ?? Date.now()));
+          info(`Stories limit reached: ${storiesCompletedThisRun}/${this.config.maxStories} stories completed this run.`);
           info(`Total session time: ${totalDuration}`);
           await this.logProgress(
-            `STORIES LIMIT REACHED — ${this.storiesCompletedThisRun}/${this.config.maxStories} stories completed this run. ` +
+            `STORIES LIMIT REACHED — ${storiesCompletedThisRun}/${this.config.maxStories} stories completed this run. ` +
             `Overall progress: ${status.completed}/${status.total} stories complete. ` +
             `Total session time: ${totalDuration}`
           );
@@ -327,11 +319,6 @@ export class AgentIterator {
         const status = this.prdManager.getStatus();
         info(`Iteration ${i} complete. Progress: ${status.completed}/${status.total} stories complete.`);
 
-        // Update session with current iteration (even if no story completed)
-        await this.sessionManager.update({
-          currentIteration: i,
-        });
-
         // Log iteration to progress.log
         const nextStory = this.getTargetStory();
         const storyInfo = nextStory
@@ -355,7 +342,8 @@ export class AgentIterator {
 
     // Max iterations reached without completion
     await this.cleanupACP();
-    const totalDuration = formatDuration(Date.now() - this.sessionStartTime);
+    const state = this.store.getState();
+    const totalDuration = formatDuration(Date.now() - (state.sessionStartTime ?? Date.now()));
     warn(`Max iterations (${this.config.maxIterations}) reached without completing all tasks.`);
     const finalStatus = this.prdManager.getStatus();
     info(`Final progress: ${finalStatus.completed}/${finalStatus.total} stories complete.`);
@@ -502,21 +490,12 @@ export class AgentIterator {
     const sessionId = this.acpClient!.getSessionId() ?? undefined;
     const startTime = Date.now();
 
-    this.acpLogStream?.write(`\n--- Iteration ${i}/${this.config.maxIterations} (${this.config.tool})${this.isResumedSession ? ' [resumed]' : ''} ---\n`);
+    const isResumed = this.store?.getState().isResumed ?? false;
+    this.acpLogStream?.write(`\n--- Iteration ${i}/${this.config.maxIterations} (${this.config.tool})${isResumed ? ' [resumed]' : ''} ---\n`);
 
     const result: ACPPromptResult = await this.acpClient!.sendPrompt(sessionId, promptContent);
 
     const durationMs = Date.now() - startTime;
-    this.acpTotalDuration += durationMs;
-
-    // Persist ACP session ID for potential resumption on interruption
-    const currentSessionId = this.acpClient!.getSessionId();
-    if (currentSessionId) {
-      await this.sessionManager.update({
-        acpSessionId: currentSessionId,
-        currentIteration: i,
-      });
-    }
 
     // Write summary to log
     if (result.cost) {
@@ -527,11 +506,22 @@ export class AgentIterator {
 
     // Report cost/duration to CLI
     if (result.cost) {
-      this.acpTotalCost += result.cost.amount;
       info(`Iteration cost: $${result.cost.amount.toFixed(4)} ${result.cost.currency}`);
     }
     info(`Iteration duration: ${formatDuration(durationMs)}`);
     info(`Stop reason: ${result.stopReason}`);
+
+    // Persist ACP session ID + cost/duration via store dispatch.
+    // The main loop's ITERATION_FINISHED dispatch will overwrite the iteration counter
+    // but accumulate cost/duration additively, so we dispatch here with the ACP data.
+    const currentSessionId = this.acpClient!.getSessionId();
+    await this.store!.dispatch({
+      type: 'ITERATION_FINISHED',
+      iteration: i,
+      costUsd: result.cost?.amount,
+      durationMs,
+      acpSessionId: currentSessionId ?? undefined,
+    });
   }
 
   /**
@@ -568,7 +558,8 @@ export class AgentIterator {
 
     // Set up log file for real-time output
     const logPath = join(this.config.directory, '.agent-output.log');
-    this.acpLogStream = createWriteStream(logPath, { flags: this.isResumedSession ? 'a' : 'w' });
+    const isResumed = this.store?.getState().isResumed ?? false;
+    this.acpLogStream = createWriteStream(logPath, { flags: isResumed ? 'a' : 'w' });
 
     // Subscribe to ACP events for logging
     this.acpClient.on((event: ACPEvent) => {
@@ -587,8 +578,9 @@ export class AgentIterator {
     );
 
     // Attempt to resume an existing ACP session if available
-    if (this.isResumedSession) {
-      const session = await this.sessionManager.load();
+    const isResumedSession = this.store?.getState().isResumed ?? false;
+    if (isResumedSession) {
+      const session = this.store!.getState();
       const savedSessionId = session.acpSessionId;
 
       if (savedSessionId && this.acpClient.getAgentCapabilities()?.loadSession) {
@@ -764,24 +756,24 @@ export class AgentIterator {
     this.sigintHandler = async () => {
       info('\nInterrupted — saving session state for resumption...');
 
-      // Save ACP session ID for resumption
       const acpSessionId = this.acpClient?.getSessionId() ?? undefined;
-      await this.sessionManager.update({
-        currentIteration: this.iterationCount,
-        completedStoryIds: [...this.sessionCompletedIds],
-        lastStoryId: this.getTargetStory()?.id ?? null,
+      const lastStoryId = this.getTargetStory()?.id ?? null;
+
+      await this.store?.dispatch({
+        type: 'SESSION_INTERRUPTED',
+        lastStoryId,
         acpSessionId,
-        isResumed: false,
       });
 
+      const state = this.store?.getState();
+
       // Write to progress log
-      const storyInfo = this.getTargetStory();
       await this.logProgress(
-        `INTERRUPTED at iteration ${this.iterationCount}. ` +
+        `INTERRUPTED at iteration ${state?.currentIteration ?? 0}. ` +
         `Session saved for resumption. ` +
-        `${this.sessionCompletedIds.length} stories completed. ` +
+        `${state?.completedStoryIds.length ?? 0} stories completed. ` +
         `ACP session: ${acpSessionId ?? 'n/a'}. ` +
-        (storyInfo ? `Next story: ${storyInfo.id} "${storyInfo.title}"` : 'No next story')
+        (lastStoryId ? `Next story: ${lastStoryId}` : 'No next story')
       );
 
       // Clean up ACP client
@@ -811,12 +803,16 @@ export class AgentIterator {
     this.unregisterSigintHandler();
 
     if (this.acpLogStream) {
+      const state = this.store?.getState();
+      const totalCost = state?.totalCostUsd ?? 0;
+      const totalDuration = state?.totalDurationMs ?? 0;
+
       // Write final summary
-      if (this.acpTotalCost > 0) {
-        this.acpLogStream.write(`\nTotal cost: $${this.acpTotalCost.toFixed(4)}\n`);
+      if (totalCost > 0) {
+        this.acpLogStream.write(`\nTotal cost: $${totalCost.toFixed(4)}\n`);
       }
-      if (this.acpTotalDuration > 0) {
-        this.acpLogStream.write(`Total duration: ${formatDuration(this.acpTotalDuration)}\n`);
+      if (totalDuration > 0) {
+        this.acpLogStream.write(`Total duration: ${formatDuration(totalDuration)}\n`);
       }
       this.acpLogStream.end();
       this.acpLogStream = null;
@@ -855,21 +851,24 @@ export class AgentIterator {
   private async handleComplete(): Promise<void> {
     await this.cleanupACP();
 
+    const state = this.store!.getState();
     const finalStatus = this.prdManager.getStatus();
-    const totalDuration = formatDuration(Date.now() - this.sessionStartTime);
+    const totalDuration = formatDuration(Date.now() - (state.sessionStartTime ?? Date.now()));
+    const iteration = state.currentIteration;
+    const storiesCompletedThisRun = state.storiesCompletedThisRun ?? 0;
     success('All tasks completed!');
-    success(`Completed at iteration ${this.iterationCount} of ${this.config.maxIterations}`);
+    success(`Completed at iteration ${iteration} of ${this.config.maxIterations}`);
     info(`Total stories: ${finalStatus.total} | Completed: ${finalStatus.completed}`);
     info(`Total session time: ${totalDuration}`);
     if (this.config.maxStories) {
-      info(`Stories completed this run: ${this.storiesCompletedThisRun}/${this.config.maxStories}`);
+      info(`Stories completed this run: ${storiesCompletedThisRun}/${this.config.maxStories}`);
     }
     // Delete session file on clean exit
-    await this.sessionManager.delete();
+    await this.store!.delete();
     await this.logProgress(
-      `ALL COMPLETE — Finished at iteration ${this.iterationCount}/${this.config.maxIterations}. ` +
+      `ALL COMPLETE — Finished at iteration ${iteration}/${this.config.maxIterations}. ` +
       `Total stories: ${finalStatus.total}, Completed: ${finalStatus.completed}` +
-      (this.config.maxStories ? `, This run: ${this.storiesCompletedThisRun}/${this.config.maxStories}` : '') +
+      (this.config.maxStories ? `, This run: ${storiesCompletedThisRun}/${this.config.maxStories}` : '') +
       `. Total session time: ${totalDuration}`
     );
   }
@@ -907,7 +906,10 @@ export class AgentIterator {
 
     // Migrate incomplete stories to new PRD (completed stories stay in archive)
     const { migrated, archived } = await this.prdManager.migrateIncompleteStories(currentBranch);
-    this.branchName = currentBranch;
+    // Update branch name in store if available
+    if (this.store) {
+      await this.store.dispatch({ type: 'BRANCH_CHANGED', newBranch: currentBranch });
+    }
 
     if (migrated > 0) {
       info(`Migrated ${migrated} incomplete stories to new branch. ${archived} completed stories archived.`);
@@ -942,7 +944,9 @@ export class AgentIterator {
 
     // Migrate incomplete stories to new PRD
     const { migrated, archived } = await this.prdManager.migrateIncompleteStories(newBranch);
-    this.branchName = newBranch;
+    if (this.store) {
+      await this.store.dispatch({ type: 'BRANCH_CHANGED', newBranch });
+    }
 
     if (migrated > 0) {
       info(`Migrated ${migrated} incomplete stories to new branch. ${archived} completed stories archived.`);
@@ -994,7 +998,8 @@ export class AgentIterator {
    */
   private async logProgress(message: string): Promise<void> {
     const timestamp = new Date().toISOString();
-    const branchInfo = this.branchName ? ` [branch: ${this.branchName}]` : '';
+    const branchName = this.store?.getState().branchName ?? this.prdManager.getBranchName();
+    const branchInfo = branchName ? ` [branch: ${branchName}]` : '';
     const entry = `\n[${timestamp}]${branchInfo} ${message}\n`;
     try {
       await appendText(this.progressFilePath, entry);
@@ -1014,7 +1019,7 @@ export class AgentIterator {
    * Get the current iteration count
    */
   getIterationCount(): number {
-    return this.iterationCount;
+    return this.store?.getState().currentIteration ?? 0;
   }
 
   /**

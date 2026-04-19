@@ -6,5 +6,4 @@ bin/
 .session.json
 progress.log
 archive/
-.last-branch
 .agent-output.log

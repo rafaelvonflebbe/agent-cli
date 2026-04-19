@@ -160,7 +160,8 @@ export interface ArchiveCheckResult {
 }
 
 /**
- * Session state persisted between interrupted runs
+ * Session state persisted between interrupted runs.
+ * Managed by the session reducer — all transitions via dispatch.
  */
 export interface SessionState {
   /** Current iteration number when session was saved */
@@ -179,6 +180,18 @@ export interface SessionState {
   acpSessionId?: string;
   /** Whether this session was resumed from a previous interrupted run */
   isResumed?: boolean;
+  /** Number of stories completed in this run */
+  storiesCompletedThisRun?: number;
+  /** Total cost in USD accumulated across ACP iterations */
+  totalCostUsd?: number;
+  /** Total duration in ms accumulated across ACP iterations */
+  totalDurationMs?: number;
+  /** Session start time as epoch ms */
+  sessionStartTime?: number;
+  /** Whether stopWhen was triggered this session */
+  stopWhenTriggered?: boolean;
+  /** Reason stopWhen was triggered */
+  stopWhenReason?: string;
 }
 
 /**
