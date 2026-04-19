@@ -2,7 +2,7 @@
  * Agent Iterator - main loop orchestration
  */
 
-import type { AgentConfig } from './types.js';
+import type { AgentConfig, UserStory } from './types.js';
 import { resolve } from 'path';
 import { createPRDManager, PRDManager } from './prd.js';
 import { createArchiver, Archiver } from './archiver.js';
@@ -103,6 +103,12 @@ export class AgentIterator {
     await this.prdManager.load();
     this.branchName = this.prdManager.getBranchName();
 
+    // Validate --story IDs against PRD
+    if (this.config.storyIds && this.config.storyIds.length > 0) {
+      this.validateTargetStories(this.config.storyIds);
+      info(`Target stories: ${this.config.storyIds.join(', ')}`);
+    }
+
     // Resolve projectDirectory from PRD (overrides config if set)
     const prdProjectDir = this.prdManager.getPRD().projectDirectory;
     if (prdProjectDir) {
@@ -189,7 +195,7 @@ export class AgentIterator {
         }
 
         // Get target story for this iteration
-        const targetStory = this.prdManager.getStatus().nextStory;
+        const targetStory = this.getTargetStory();
 
         // Capture git status before live iterations (skip in dry-run)
         // Use projectDirectory for git ops when set (that's where the AI tool makes changes)
@@ -280,8 +286,17 @@ export class AgentIterator {
           return;
         }
 
-        // Check if all stories are complete
-        if (this.prdManager.areAllStoriesComplete()) {
+        // Check if all target stories are complete (all stories when no --story filter)
+        if (this.config.storyIds && this.config.storyIds.length > 0) {
+          const allTargetsComplete = this.config.storyIds.every(id => {
+            const s = this.prdManager.getPRD().userStories.find(us => us.id === id);
+            return s?.passes === true;
+          });
+          if (allTargetsComplete) {
+            await this.handleComplete();
+            return;
+          }
+        } else if (this.prdManager.areAllStoriesComplete()) {
           await this.handleComplete();
           return;
         }
@@ -296,10 +311,10 @@ export class AgentIterator {
         });
 
         // Log iteration to progress.log
-        const nextStory = status.nextStory;
+        const nextStory = this.getTargetStory();
         const storyInfo = nextStory
           ? `Next incomplete story: ${nextStory.id} "${nextStory.title}" (priority ${nextStory.priority})`
-          : 'All stories complete';
+          : this.config.storyIds ? 'All targeted stories complete' : 'All stories complete';
         await this.logProgress(
           `Iteration ${i} — Progress: ${status.completed}/${status.total} stories complete. ${storyInfo}`
         );
@@ -332,11 +347,56 @@ export class AgentIterator {
   }
 
   /**
+   * Validate that targeted story IDs exist in PRD and dependencies are met.
+   * @throws Error if any ID is missing or dependencies are unmet
+   */
+  private validateTargetStories(ids: string[]): void {
+    const prd = this.prdManager.getPRD();
+    const storyIds = new Set(prd.userStories.map(s => s.id));
+
+    for (const id of ids) {
+      if (!storyIds.has(id)) {
+        throw new Error(`Story '${id}' not found in prd.json. Available: ${[...storyIds].join(', ')}`);
+      }
+    }
+
+    for (const id of ids) {
+      const story = prd.userStories.find(s => s.id === id)!;
+      const unmet = this.prdManager.getUnmetDependencies(story);
+      if (unmet.length > 0) {
+        throw new Error(`Story '${id}' has unmet dependencies: ${unmet.join(', ')}`);
+      }
+      if (story.passes) {
+        warn(`Story '${id}' is already complete — will be skipped`);
+      }
+    }
+  }
+
+  /**
+   * Get the target story for the current iteration.
+   * When --story is set, returns the next incomplete targeted story (in order).
+   * Otherwise falls back to priority-based nextStory.
+   */
+  private getTargetStory(): UserStory | undefined {
+    if (this.config.storyIds && this.config.storyIds.length > 0) {
+      const prd = this.prdManager.getPRD();
+      for (const id of this.config.storyIds) {
+        const story = prd.userStories.find(s => s.id === id);
+        if (story && !story.passes) {
+          return story;
+        }
+      }
+      // All targeted stories are complete
+      return undefined;
+    }
+    return this.prdManager.getStatus().nextStory;
+  }
+
+  /**
    * Run a single live iteration (spawns external tool or uses ACP client)
    */
   private async runLiveIteration(i: number): Promise<void> {
-    const status = this.prdManager.getStatus();
-    const story = status.nextStory;
+    const story = this.getTargetStory();
     iterationHeader(i, this.config.maxIterations, this.config.tool, story ? { id: story.id, title: story.title, priority: story.priority } : undefined);
 
     if (this.useACP) {
@@ -628,13 +688,13 @@ export class AgentIterator {
       await this.sessionManager.update({
         currentIteration: this.iterationCount,
         completedStoryIds: [...this.sessionCompletedIds],
-        lastStoryId: this.prdManager.getStatus().nextStory?.id ?? null,
+        lastStoryId: this.getTargetStory()?.id ?? null,
         acpSessionId,
         isResumed: false,
       });
 
       // Write to progress log
-      const storyInfo = this.prdManager.getStatus().nextStory;
+      const storyInfo = this.getTargetStory();
       await this.logProgress(
         `INTERRUPTED at iteration ${this.iterationCount}. ` +
         `Session saved for resumption. ` +
@@ -691,16 +751,11 @@ export class AgentIterator {
    * Run a single dry-run iteration (simulates completion without spawning tools)
    */
   private async runDryIteration(i: number): Promise<void> {
-    const status = this.prdManager.getStatus();
+    const story = this.getTargetStory();
 
-    if (status.allComplete) {
-      info(`[DRY-RUN] Iteration ${i}: All stories already complete.`);
-      return;
-    }
-
-    const story = status.nextStory;
     if (!story) {
-      warn(`[DRY-RUN] Iteration ${i}: No eligible story — all remaining stories have unmet dependencies.`);
+      const reason = this.config.storyIds ? 'All targeted stories are complete' : 'No eligible story — all remaining stories have unmet dependencies';
+      info(`[DRY-RUN] Iteration ${i}: ${reason}.`);
       return;
     }
 

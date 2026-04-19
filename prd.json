@@ -160,6 +160,78 @@
       "priority": 2,
       "passes": true,
       "notes": "This solves the problem of having multiple copies of agent-cli.md that need to be updated independently. The global template is the default; per-project overrides are opt-in. Similar pattern to how providers.json works at ~/.agent-cli/providers.json."
+    },
+    {
+      "id": "US-068",
+      "title": "Add stopWhen to PRD for declarative loop termination conditions",
+      "description": "Add a `stopWhen` field to prd.json that lets users define custom conditions for when the agent loop should stop, beyond the existing all-stories-complete and max-iterations defaults. Support: stories (stop when specific story IDs complete), maxCostUsd (stop when accumulated cost exceeds threshold, ACP only), maxDurationMinutes (stop when session time exceeds limit). Conditions use OR logic — any condition being met triggers a stop. Also add a file deletion guard that detects and logs when the agent tries to delete files outside the project directory.",
+      "acceptanceCriteria": [
+        "StopWhenCondition interface added to types.ts with stories, maxCostUsd, maxDurationMinutes fields",
+        "PRD interface extended with optional stopWhen field",
+        "prd.schema.json updated with stopWhen property definition",
+        "PRDManager.shouldStop() evaluates conditions with OR logic",
+        "Iterator checks stopWhen after each iteration (after stories check, before maxStories check)",
+        "File deletion guard: detect tool calls that delete files outside allowed roots, log warning to .agent-output.log and progress.log",
+        "isPathSafe() helper in file-utils.ts for path boundary checks",
+        "TEMPLATE_PRD in init.ts includes stopWhen example (empty/commented)",
+        "Backward compatible: missing stopWhen keeps current behavior",
+        "npm run build passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Inspired by Vercel AI SDK's stopWhen callback. Since prd.json is static JSON, conditions are declarative (not callbacks). File deletion guard is safety-first: log but don't block initially, can add blocking later. Example stopWhen: { \"stories\": [\"US-001\"], \"maxCostUsd\": 5.0, \"maxDurationMinutes\": 30 }"
+    },
+    {
+      "id": "US-069",
+      "title": "Research and adopt AI SDK loop control patterns",
+      "description": "Review the Vercel AI SDK's loop control primitives (maxSteps, stopWhen, onStepFinish, tool execution patterns) and evaluate which concepts can improve agent-cli's iteration loop. Focus on: conditional termination, step-level hooks, error recovery strategies, and structured progress reporting.",
+      "acceptanceCriteria": [
+        "Document which AI SDK patterns apply to agent-cli's architecture",
+        "Identify gaps where agent-cli can improve beyond current patterns",
+        "Evaluate onStepFinish for potential per-iteration hooks (e.g., onIterationFinish callback)",
+        "Compare error recovery: AI SDK retry patterns vs agent-cli's current approach",
+        "List actionable improvements as future stories"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "AI SDK reference: https://ai-sdk.dev/docs/agents/loop-control — maxSteps (equiv to maxIterations), stopWhen callback (equiv to our declarative stopWhen from US-068), onStepFinish hook. Look at how AI SDK handles tool results, multi-step reasoning, and structured output between steps."
+    },
+    {
+      "id": "US-070",
+      "title": "Design and implement a session state reducer",
+      "description": "Create a reducer pattern to manage session state across iterations. Currently state is scattered: session file (.session.json), PRD manager, iterator fields (iterationCount, storiesCompletedThisRun, acpTotalCost, acpTotalDuration, sessionCompletedIds). A reducer centralizes state transitions (story completed, iteration finished, session interrupted, branch changed, stopWhen triggered) into a single predictable state machine with an immutable state object. This makes state persistence, resumption, and observability straightforward — dispatch an action, get next state, persist it.",
+      "acceptanceCriteria": [
+        "Define SessionState interface with all current state fields (iteration, completed stories, cost, duration, branch, ACP session ID, stopWhen status)",
+        "Define action types: STORY_COMPLETED, ITERATION_FINISHED, SESSION_INTERRUPTED, BRANCH_CHANGED, STOPWHEN_TRIGGERED, SESSION_RESUMED",
+        "Reducer function: (state, action) => nextState — pure, no side effects",
+        "Replace scattered state mutations in iterator.ts with dispatch calls",
+        "State persisted to .session.json after every dispatch (single write point)",
+        "Monitor/observability modules read from reducer state instead of aggregating from multiple sources",
+        "Backward compatible: existing .session.json files load into initial state",
+        "npm run build passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Inspired by Redux-like reducer pattern and AI SDK's internal state management. Current pain points: (1) session state updated in 4+ places in iterator.ts, (2) cost/duration tracked as instance fields separate from session file, (3) resumption reconstructs state from multiple sources. A reducer solves all three. Future: could enable undo/redo, time-travel debugging, and state snapshots for the monitor TUI."
+    },
+    {
+      "id": "US-071",
+      "title": "Add --story flag to target a specific story by ID",
+      "description": "Add a --story <id> CLI flag that lets users run agent-cli for a single specific story instead of always picking the next highest-priority story. When set, the iterator skips priority ordering and works only on the given story ID. Validates that the ID exists in prd.json and that dependencies are met. Works with both --dry-run and live modes.",
+      "acceptanceCriteria": [
+        "CLI flag --story <id> added to main command (e.g., agent-cli --story US-068)",
+        "AgentConfig type extended with optional storyId field",
+        "Iterator validates story ID exists in prd.json — error if not found",
+        "Iterator validates dependencies are met for the target story — error if blocked",
+        "When --story is set, iterator runs only that story (ignores priority ordering)",
+        "Works with --stories 1 to run exactly one iteration for the targeted story",
+        "status command shows which story would be targeted",
+        "Backward compatible: omitting --story keeps current priority-based behavior",
+        "npm run build passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Currently getNextStory() always returns highest priority incomplete story with deps met. With --story, we bypass that and return the specific story. Supports multiple IDs comma-separated (e.g., --story US-068,US-070) to run specific stories in order. Useful for re-running a failed story, jumping ahead, or targeted testing."
     }
   ]
 }

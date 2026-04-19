@@ -114,6 +114,8 @@ export interface AgentConfig {
   permissionMode?: PermissionMode;
   /** Force ACP (Agent Client Protocol) mode instead of legacy spawn */
   acp?: boolean;
+  /** Specific story IDs to run (comma-separated). Skips priority ordering. */
+  storyIds?: string[];
 }
 
 /**

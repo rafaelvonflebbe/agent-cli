@@ -90,6 +90,7 @@ export function createConfig(options: Partial<AgentConfig> = {}): AgentConfig {
     sandbox: options.sandbox,
     permissionMode: options.permissionMode ?? DEFAULTS.permissionMode,
     acp: options.acp,
+    storyIds: options.storyIds,
   };
 }
 
