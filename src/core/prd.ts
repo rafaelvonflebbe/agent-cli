@@ -259,6 +259,47 @@ export class PRDManager {
   getNextStory(): UserStory | undefined {
     return this.getStatus().nextStory;
   }
+
+  /**
+   * Evaluate stopWhen conditions with OR logic.
+   * Returns { shouldStop: true, reason } if any condition is met.
+   * Returns { shouldStop: false } if no conditions are met or stopWhen is not defined.
+   */
+  shouldStop(options?: { totalCostUsd?: number; sessionDurationMs?: number }): { shouldStop: boolean; reason?: string } {
+    const prd = this.getPRD();
+    const stopWhen = prd.stopWhen;
+    if (!stopWhen) {
+      return { shouldStop: false };
+    }
+
+    // Check stories condition
+    if (stopWhen.stories && stopWhen.stories.length > 0) {
+      const allTargeted = stopWhen.stories.every(id => {
+        const story = prd.userStories.find(s => s.id === id);
+        return story?.passes === true;
+      });
+      if (allTargeted) {
+        return { shouldStop: true, reason: `stopWhen stories condition met: all specified stories complete (${stopWhen.stories.join(', ')})` };
+      }
+    }
+
+    // Check maxCostUsd condition
+    if (stopWhen.maxCostUsd !== undefined && options?.totalCostUsd !== undefined) {
+      if (options.totalCostUsd >= stopWhen.maxCostUsd) {
+        return { shouldStop: true, reason: `stopWhen maxCostUsd condition met: $${options.totalCostUsd.toFixed(2)} >= $${stopWhen.maxCostUsd}` };
+      }
+    }
+
+    // Check maxDurationMinutes condition
+    if (stopWhen.maxDurationMinutes !== undefined && options?.sessionDurationMs !== undefined) {
+      const durationMinutes = options.sessionDurationMs / 60000;
+      if (durationMinutes >= stopWhen.maxDurationMinutes) {
+        return { shouldStop: true, reason: `stopWhen maxDurationMinutes condition met: ${durationMinutes.toFixed(1)}min >= ${stopWhen.maxDurationMinutes}min` };
+      }
+    }
+
+    return { shouldStop: false };
+  }
 }
 
 /**

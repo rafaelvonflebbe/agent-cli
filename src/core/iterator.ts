@@ -10,7 +10,7 @@ import { createToolRunner, ToolRunner } from './tool-runner.js';
 import { createSessionManager, SessionManager } from './session.js';
 import { validateConfig, isACPProvider } from './config.js';
 import { info, success, error, warn, iterationHeader } from '../utils/logger.js';
-import { appendText, readText } from '../utils/file-utils.js';
+import { appendText, readText, isPathSafe } from '../utils/file-utils.js';
 import { captureGitStatus, diffGitStatus, displayFileChanges, branchExists, getCurrentBranch } from '../utils/git-utils.js';
 import type { FileChange } from '../utils/git-utils.js';
 import { notifyStoryComplete, isTelegramConfigured } from './telegram.js';
@@ -271,6 +271,26 @@ export class AgentIterator {
               });
             }
           }
+        }
+
+        // Check stopWhen conditions (after story completions, before maxStories)
+        const stopResult = this.prdManager.shouldStop({
+          totalCostUsd: this.acpTotalCost > 0 ? this.acpTotalCost : undefined,
+          sessionDurationMs: Date.now() - this.sessionStartTime,
+        });
+        if (stopResult.shouldStop) {
+          await this.cleanupACP();
+          const status = this.prdManager.getStatus();
+          const totalDuration = formatDuration(Date.now() - this.sessionStartTime);
+          warn(`stopWhen triggered: ${stopResult.reason}`);
+          info(`Progress: ${status.completed}/${status.total} stories complete.`);
+          info(`Total session time: ${totalDuration}`);
+          await this.logProgress(
+            `STOPWHEN TRIGGERED — ${stopResult.reason}. ` +
+            `Overall progress: ${status.completed}/${status.total} stories complete. ` +
+            `Total session time: ${totalDuration}`
+          );
+          return;
         }
 
         // Check if stories limit has been reached
@@ -659,6 +679,8 @@ export class AgentIterator {
             this.acpLogStream.write(`    Diff: ${diff.path}\n`);
           }
         }
+        // File deletion guard: check for deletions outside allowed roots
+        this.checkFileDeletionGuard(event.toolCall);
         break;
 
       case 'tool_call_update':
@@ -674,6 +696,27 @@ export class AgentIterator {
       default:
         // Other events (usage, plan, state_change, etc.) are handled by the logger
         break;
+    }
+  }
+
+  /**
+   * Check tool calls for file deletion operations outside allowed roots.
+   * Logs warnings to .agent-output.log and progress.log when detected.
+   */
+  private checkFileDeletionGuard(toolCall: { title: string; locations?: { path: string; line?: number | null }[] }): void {
+    const deletionPattern = /delete|remove|rm |unlink|rmdir/i;
+    if (!deletionPattern.test(toolCall.title)) return;
+
+    const allowedRoot = this.config.projectDirectory || this.config.directory;
+    if (!toolCall.locations?.length) return;
+
+    for (const loc of toolCall.locations) {
+      if (!isPathSafe(loc.path, allowedRoot)) {
+        const msg = `SECURITY WARNING: Tool "${toolCall.title}" targets path outside project: ${loc.path} (allowed root: ${allowedRoot})`;
+        warn(msg);
+        this.acpLogStream?.write(`\nWARNING: ${msg}\n`);
+        this.logProgress(msg).catch(() => {});
+      }
     }
   }
 

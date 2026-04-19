@@ -3,6 +3,19 @@
  */
 
 /**
+ * Declarative conditions for when the agent loop should stop.
+ * Conditions use OR logic — any condition being met triggers a stop.
+ */
+export interface StopWhenCondition {
+  /** Stop when these specific story IDs are completed */
+  stories?: string[];
+  /** Stop when accumulated cost exceeds this threshold in USD (ACP only) */
+  maxCostUsd?: number;
+  /** Stop when total session time exceeds this limit in minutes */
+  maxDurationMinutes?: number;
+}
+
+/**
  * A single user story in the PRD
  */
 export interface UserStory {
@@ -44,6 +57,8 @@ export interface PRD {
   projectDirectory?: string;
   /** MCP servers to attach to ACP sessions for this project */
   mcpServers?: McpServerConfig[];
+  /** Custom conditions for when the agent loop should stop (OR logic) */
+  stopWhen?: StopWhenCondition;
 }
 
 /**

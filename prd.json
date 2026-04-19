@@ -1,166 +1,8 @@
 {
   "project": "agent-cli",
-  "branchName": "feat/acp",
+  "branchName": "feat/session",
   "description": "A test project for agent-cli",
   "userStories": [
-    {
-      "id": "US-060",
-      "title": "Install @agentclientprotocol/sdk and create ACP client module",
-      "description": "Add the ACP TypeScript SDK as a dependency and create a new src/core/acp-client.ts module that wraps the ClientSideConnection class. This module handles the ACP lifecycle: launch agent subprocess, initialize protocol handshake, create session, send prompts, and receive structured updates. Reference: https://agentclientprotocol.com/libraries/typescript",
-      "acceptanceCriteria": [
-        "npm install @agentclientprotocol/sdk succeeds",
-        "New src/core/acp-client.ts with ACPClient class",
-        "ACPClient.launch() starts an agent subprocess and performs ACP handshake (Initialize + NewSession)",
-        "ACPClient.sendPrompt(sessionId, prompt) sends a prompt and returns structured SessionUpdate events",
-        "ACPClient.close() gracefully shuts down the session and process",
-        "Module is exportable but NOT wired into the main loop yet (standalone module)",
-        "npm run build passes"
-      ],
-      "priority": 1,
-      "passes": true,
-      "notes": "ACP SDK provides ClientSideConnection for the client side (agent-cli) and AgentSideConnection for agents. We need ClientSideConnection. The SDK handles JSON-RPC 2.0 over stdio transport. Reference: Compozy uses github.com/coder/acp-go-sdk v0.6.3 in Go — we use the TypeScript equivalent."
-    },
-    {
-      "id": "US-061",
-      "title": "Implement ACP session lifecycle with structured update handling",
-      "description": "Build the full session lifecycle on top of the ACP client: create session with working directory, send prompt as ContentBlock, subscribe to SessionUpdate notifications, parse structured content (text blocks, tool calls with start/update/completed/failed states, diffs, terminal output), detect session completion and idle states, handle errors with structured context.",
-      "acceptanceCriteria": [
-        "Session creation accepts cwd and optional MCP servers config",
-        "Prompts sent as acp.TextBlock content blocks",
-        "SessionUpdate handler parses all content types: text, tool_use (start/update/completed/failed), diff, terminal_output",
-        "Tool call events include tool_call_id, tool name, and structured input/output",
-        "Diff events include old_text, new_text, and file path",
-        "Idle detection: session state transitions (working -> idle -> waiting_for_tool) are tracked",
-        "Session completion is detected from protocol (not string scanning)",
-        "Error handling uses structured ACP error codes, not process exit codes",
-        "All events emitted to the event bus (US-046 dependency) for journaling and UI",
-        "npm run build passes"
-      ],
-      "priority": 1,
-      "passes": true,
-      "notes": "This replaces the current stream-json parsing in tool-runner.ts. ACP provides native structured updates instead of us parsing Claude-specific stream-json format. Compozy reference: internal/core/agent/client.go lines 400-600 (sessionUpdate handler with content block parsing).",
-      "dependsOn": [
-        "US-060"
-      ]
-    },
-    {
-      "id": "US-062",
-      "title": "Multi-agent support via ACP provider registry",
-      "description": "Replace the current hardcoded tool registry (claude, openclaude) with an ACP provider registry. Each provider specifies: agent name, ACP adapter command (e.g. npx @agentclientprotocol/claude-agent-acp for Claude, npx @zed-industries/codex-acp for Codex), supported capabilities, and default MCP servers. Users can add new agents without code changes via config.",
-      "acceptanceCriteria": [
-        "New src/core/acp-registry.ts with ACPProviderRegistry",
-        "Built-in providers: Claude (@agentclientprotocol/claude-agent-acp), Codex (@zed-industries/codex-acp), Copilot (@github/copilot --acp), Gemini (@google/gemini-cli --acp)",
-        "Each provider has: name, command, args, capabilities (fs, terminal), default env vars",
-        "Configurable via .agent-cli/providers.json or similar — users can add custom providers",
-        "CLI --tool flag maps to provider name (e.g. --tool codex)",
-        "Provider availability check (is the adapter installed?)",
-        "Fallback: if ACP adapter not found, suggest install command",
-        "npm run build passes"
-      ],
-      "priority": 2,
-      "passes": true,
-      "notes": "Reference: Compozy internal/core/agent/registry_specs.go has agent specs with Commands, Fallbacks, and EnvVars. ACP adapters are npm packages like @agentclientprotocol/claude-agent-acp. This makes agent-cli agent-agnostic."
-    },
-    {
-      "id": "US-063",
-      "title": "MCP server integration per ACP session",
-      "description": "ACP natively supports attaching MCP servers to sessions. Implement MCP server configuration per provider/project that gets passed during session creation. This allows agents to use additional tools (databases, APIs, filesystem extensions) beyond their built-in capabilities.",
-      "acceptanceCriteria": [
-        "Session creation accepts mcpServers config matching ACP's MCP server format",
-        "MCP servers configurable per project (in prd.json or separate config)",
-        "MCP servers passed to NewSession request via the ACP SDK",
-        "Agent can use MCP tools during execution — tool calls appear in structured updates",
-        "Support at least: filesystem MCP server, custom tool MCP servers",
-        "npm run build passes"
-      ],
-      "priority": 2,
-      "passes": true,
-      "notes": "Reference: Compozy passes MCP servers in NewSessionRequest. This is a major advantage over the current approach — agents get extensible tools without modifying agent-cli. MCP server format: { command: string, args: string[], env?: Record<string, string> }.",
-      "dependsOn": [
-        "US-060"
-      ]
-    },
-    {
-      "id": "US-064",
-      "title": "Wire ACP client into the main iterator loop",
-      "description": "Replace the current tool-runner.ts spawn+stdout approach with the ACP client for structured communication. The iterator creates an ACP session per iteration, sends the prompt as a structured ContentBlock, receives SessionUpdates, and detects completion from the protocol (no more <promise>COMPLETE</promise> string scanning). Keep tool-runner.ts as a legacy fallback for non-ACP tools.",
-      "acceptanceCriteria": [
-        "Iterator detects if a tool has ACP support (via registry) and uses ACP client instead of tool-runner",
-        "ACP path: create session -> send prompt -> stream updates -> detect completion from protocol",
-        "Legacy path: existing tool-runner spawn+stdout (unchanged, for tools without ACP)",
-        "Story completion detection: instead of scanning stdout for <promise>COMPLETE</promise>, detect from ACP session result or agent's tool call that updates prd.json",
-        "Cost and duration extracted from ACP session metadata",
-        "Human-readable log still written to .agent-output.log",
-        "Monitor TUI shows ACP session updates (tool calls, diffs) in real time",
-        "Backward compatible: existing prd.json and workflows continue to work",
-        "npm run build passes"
-      ],
-      "priority": 3,
-      "passes": true,
-      "notes": "This is the main integration story. The iterator should prefer ACP when available, fall back to legacy spawn+stdout when not. Compozy reference: internal/core/run/executor/runner.go uses ACP client per job execution. The <promise>COMPLETE</promise> signal can be replaced by checking if the agent's final tool call updated prd.json passes field.",
-      "dependsOn": [
-        "US-060",
-        "US-061",
-        "US-062"
-      ]
-    },
-    {
-      "id": "US-065",
-      "title": "ACP session resumption for interrupted runs",
-      "description": "ACP supports loading existing sessions (LoadSession). Use this to implement proper session resumption instead of the current --resume which just tracks completed story IDs. When an iteration is interrupted, save the ACP session ID. On resume, load the session and continue from where the agent left off — no lost context, no repeated work.",
-      "acceptanceCriteria": [
-        "On interruption (SIGINT, crash), save ACP session ID to .session.json",
-        "--resume flag loads the ACP session via LoadSession instead of starting a new one",
-        "Agent continues with full context from previous run (no prompt replay)",
-        "Session timeout handling: if session is expired, start a new one with a summary of what happened",
-        "Monitor detects resumed sessions and shows continuation in the UI",
-        "npm run build passes"
-      ],
-      "priority": 3,
-      "passes": true,
-      "notes": "Major improvement over current resume which just skips completed stories. ACP session resumption preserves the full agent context (conversation, tool state, working memory). Compozy reference: internal/core/agent/client.go LoadSession support.",
-      "dependsOn": [
-        "US-061",
-        "US-064"
-      ]
-    },
-    {
-      "id": "US-066",
-      "title": "Structured file system boundaries via ACP",
-      "description": "ACP provides built-in file system capabilities with path validation. Use ACP's ReadTextFile/WriteTextFile operations instead of granting agents unrestricted filesystem access. Configure allowedRoots per session (project directory + optional add-dirs). All file operations are validated against allowed roots, preventing agents from accessing files outside their sandbox.",
-      "acceptanceCriteria": [
-        "ACP session initialized with Fs capability (ReadTextFile, WriteTextFile)",
-        "allowedRoots set to project directory (+ projectDirectory if different)",
-        "Agent file operations are validated by ACP protocol — blocked if outside allowed roots",
-        "Path resolution: all paths resolved relative to session working directory",
-        "Replaces Docker sandbox for filesystem isolation (ACP does it at protocol level)",
-        "Optional: addDirs config for multi-directory projects",
-        "npm run build passes"
-      ],
-      "priority": 4,
-      "passes": true,
-      "notes": "Reference: Compozy internal/core/agent/client.go lines 863-958 (sandbox path resolution and validation). This is a security feature — agents can only touch files in the project directory without needing Docker.",
-      "dependsOn": [
-        "US-060"
-      ]
-    },
-    {
-      "id": "US-067",
-      "title": "Global agent-cli.md with per-project override support",
-      "description": "Move the default agent-cli.md prompt template to ~/.agent-cli/agent-cli.md as a global default, eliminating the need to copy and maintain the file in every project directory. Projects can still override by having their own agent-cli.md in the working directory. The iterator and init module should check project-level first, then fall back to the global template.",
-      "acceptanceCriteria": [
-        "Default agent-cli.md stored at ~/.agent-cli/agent-cli.md",
-        "~/.agent-cli/agent-cli.md is auto-created on first run if missing (from bundled template)",
-        "Iterator checks for project-level agent-cli.md first, falls back to global",
-        "--init copies from global template to project directory",
-        "Existing projects with agent-cli.md are unaffected (project-level takes precedence)",
-        "Single source of truth: update ~/.agent-cli/agent-cli.md to affect all projects without overrides",
-        "npm run build passes"
-      ],
-      "priority": 2,
-      "passes": true,
-      "notes": "This solves the problem of having multiple copies of agent-cli.md that need to be updated independently. The global template is the default; per-project overrides are opt-in. Similar pattern to how providers.json works at ~/.agent-cli/providers.json."
-    },
     {
       "id": "US-068",
       "title": "Add stopWhen to PRD for declarative loop termination conditions",
@@ -178,7 +20,7 @@
         "npm run build passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Inspired by Vercel AI SDK's stopWhen callback. Since prd.json is static JSON, conditions are declarative (not callbacks). File deletion guard is safety-first: log but don't block initially, can add blocking later. Example stopWhen: { \"stories\": [\"US-001\"], \"maxCostUsd\": 5.0, \"maxDurationMinutes\": 30 }"
     },
     {
@@ -194,7 +36,7 @@
       ],
       "priority": 5,
       "passes": false,
-      "notes": "AI SDK reference: https://ai-sdk.dev/docs/agents/loop-control — maxSteps (equiv to maxIterations), stopWhen callback (equiv to our declarative stopWhen from US-068), onStepFinish hook. Look at how AI SDK handles tool results, multi-step reasoning, and structured output between steps."
+      "notes": "Use /playwright-cli skill in headed mode to browse the AI SDK documentation. Navigate to https://ai-sdk.dev/docs/agents/loop-control and read the pages on maxSteps, stopWhen, onStepFinish, tool execution patterns, and structured output. Then visit related pages linked from there (multi-step reasoning, error handling). All research must be done via the browser — do not use web search or fetch tools. Write findings to .tmp/research/ai-sdk-loop-control.md with sections for each pattern, applicability to agent-cli, and actionable improvements."
     },
     {
       "id": "US-070",
@@ -216,22 +58,23 @@
     },
     {
       "id": "US-071",
-      "title": "Add --story flag to target a specific story by ID",
-      "description": "Add a --story <id> CLI flag that lets users run agent-cli for a single specific story instead of always picking the next highest-priority story. When set, the iterator skips priority ordering and works only on the given story ID. Validates that the ID exists in prd.json and that dependencies are met. Works with both --dry-run and live modes.",
+      "title": "Fix --story flag: inject target into prompt and accept case-insensitive IDs",
+      "description": "Two bugs with --story: (1) The target story is never communicated to the agent — the prompt file tells the agent to pick the highest-priority story, so --story US-070 still executes US-068 (priority 4). The fix: when --story is set, append a directive to the prompt telling the agent which story to work on. (2) ID matching is case-sensitive — us-069 should match US-069.",
       "acceptanceCriteria": [
-        "CLI flag --story <id> added to main command (e.g., agent-cli --story US-068)",
-        "AgentConfig type extended with optional storyId field",
-        "Iterator validates story ID exists in prd.json — error if not found",
-        "Iterator validates dependencies are met for the target story — error if blocked",
-        "When --story is set, iterator runs only that story (ignores priority ordering)",
-        "Works with --stories 1 to run exactly one iteration for the targeted story",
-        "status command shows which story would be targeted",
-        "Backward compatible: omitting --story keeps current priority-based behavior",
+        "When --story is set, the prompt sent to the agent (both legacy stdin pipe and ACP sendPrompt) includes a clear directive to work only on the targeted story",
+        "Directive is appended to the prompt content (e.g., 'IMPORTANT: Work ONLY on story US-070 this iteration')",
+        "Agent works on the targeted story regardless of priority ordering",
+        "Legacy path (tool-runner.ts stdin pipe): inject directive into the piped prompt",
+        "ACP path (acp-client.ts sendPrompt): inject directive into the prompt content",
+        "--story us-069 matches US-069 (case-insensitive)",
+        "validateTargetStories uses case-insensitive lookup",
+        "getTargetStory uses case-insensitive lookup",
+        "Error messages still show the canonical (original case) ID",
         "npm run build passes"
       ],
-      "priority": 4,
-      "passes": true,
-      "notes": "Currently getNextStory() always returns highest priority incomplete story with deps met. With --story, we bypass that and return the specific story. Supports multiple IDs comma-separated (e.g., --story US-068,US-070) to run specific stories in order. Useful for re-running a failed story, jumping ahead, or targeted testing."
+      "priority": 3,
+      "passes": false,
+      "notes": "The prompt injection is the critical fix. Without it, --story only affects iterator tracking (headers, completion checks) but the agent ignores it. Add a buildTargetDirective(storyIds, stories) helper that generates the directive text. Inject it in runLiveIteration (legacy) and runACPIteration (ACP) before sending the prompt."
     }
   ]
 }

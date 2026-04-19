@@ -27,6 +27,11 @@ const TEMPLATE_PRD = {
       notes: "",
     },
   ],
+  // stopWhen: {
+  //   stories: ["US-001"],
+  //   maxCostUsd: 5.0,
+  //   maxDurationMinutes: 30,
+  // },
 };
 
 /**

@@ -115,6 +115,31 @@
           }
         }
       }
+    },
+    "stopWhen": {
+      "type": "object",
+      "description": "Custom conditions for when the agent loop should stop (OR logic — any condition triggers a stop).",
+      "additionalProperties": false,
+      "properties": {
+        "stories": {
+          "type": "array",
+          "description": "Stop when these specific story IDs are completed",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "maxCostUsd": {
+          "type": "number",
+          "description": "Stop when accumulated cost exceeds this threshold in USD (ACP only)",
+          "exclusiveMinimum": 0
+        },
+        "maxDurationMinutes": {
+          "type": "number",
+          "description": "Stop when total session time exceeds this limit in minutes",
+          "exclusiveMinimum": 0
+        }
+      }
     }
   }
 }

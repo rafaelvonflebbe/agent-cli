@@ -4,7 +4,7 @@
 
 import { readFile, writeFile, mkdir, copyFile, access } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve, sep } from 'path';
 import { error as logError, warn } from './logger.js';
 
 /**
@@ -130,4 +130,14 @@ export async function readText(path: string): Promise<string> {
  */
 export function pathJoin(...segments: string[]): string {
   return join(...segments);
+}
+
+/**
+ * Check if a target path is within an allowed root directory.
+ * Resolves both paths to absolute form before comparing.
+ */
+export function isPathSafe(targetPath: string, allowedRoot: string): boolean {
+  const resolved = resolve(targetPath);
+  const resolvedRoot = resolve(allowedRoot);
+  return resolved === resolvedRoot || resolved.startsWith(resolvedRoot + sep);
 }
