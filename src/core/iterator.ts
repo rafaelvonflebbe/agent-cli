@@ -208,8 +208,10 @@ export class AgentIterator {
           await this.runLiveIteration(i);
         }
 
-        // Reload PRD to get updated status
-        await this.prdManager.load();
+        // Reload PRD to get updated status (skip in dry-run to preserve in-memory state)
+        if (!this.config.dryRun) {
+          await this.prdManager.load();
+        }
 
         // Detect and accumulate file changes (live mode only)
         if (!this.config.dryRun && gitBefore) {
@@ -763,9 +765,9 @@ export class AgentIterator {
     info(`[DRY-RUN] Iteration ${i}: Would pick story ${story.id} "${story.title}" (priority ${story.priority})`);
     info(`[DRY-RUN] Iteration ${i}: Would run tool: ${this.config.tool}`);
 
-    // Simulate completing the story
+    // Simulate completing the story (in-memory only — never persist dry-run state to prd.json)
     info(`[DRY-RUN] Iteration ${i}: Simulating completion of ${story.id}`);
-    await this.prdManager.updateStory(story.id, true);
+    story.passes = true;
   }
 
   /**
