@@ -432,6 +432,25 @@ export class AgentIterator {
   }
 
   /**
+   * Build extra prompt suffix from --prompt flags.
+   * Returns null when no extra prompts are configured.
+   */
+  private buildExtraPromptSuffix(): string | null {
+    if (!this.config.extraPrompts || this.config.extraPrompts.length === 0) return null;
+    return '\n\n' + this.config.extraPrompts.join('\n\n');
+  }
+
+  /**
+   * Build the full prompt suffix combining target directive and extra prompts.
+   */
+  private buildPromptSuffix(): string | null {
+    const directive = this.buildTargetDirective();
+    const extra = this.buildExtraPromptSuffix();
+    if (!directive && !extra) return null;
+    return (directive ?? '') + (extra ?? '');
+  }
+
+  /**
    * Run a single live iteration (spawns external tool or uses ACP client)
    */
   private async runLiveIteration(i: number): Promise<void> {
@@ -449,8 +468,8 @@ export class AgentIterator {
    * Run a single iteration via the legacy tool-runner (spawn + stdout)
    */
   private async runLegacyIteration(i: number): Promise<void> {
-    const directive = this.buildTargetDirective();
-    const result = await this.toolRunner.run(i, this.config.maxIterations, directive ? { promptSuffix: directive } : undefined);
+    const suffix = this.buildPromptSuffix();
+    const result = await this.toolRunner.run(i, this.config.maxIterations, suffix ? { promptSuffix: suffix } : undefined);
 
     // Handle tool execution errors
     if (result.exitCode === -1) {
@@ -485,6 +504,12 @@ export class AgentIterator {
     const directive = this.buildTargetDirective();
     if (directive) {
       promptContent += directive;
+    }
+
+    // Append extra prompt instructions from --prompt flags
+    const extra = this.buildExtraPromptSuffix();
+    if (extra) {
+      promptContent += extra;
     }
 
     const sessionId = this.acpClient!.getSessionId() ?? undefined;
@@ -839,6 +864,15 @@ export class AgentIterator {
     iterationHeader(i, this.config.maxIterations, this.config.tool, { id: story.id, title: story.title, priority: story.priority });
     info(`[DRY-RUN] Iteration ${i}: Would pick story ${story.id} "${story.title}" (priority ${story.priority})`);
     info(`[DRY-RUN] Iteration ${i}: Would run tool: ${this.config.tool}`);
+
+    // Log extra prompts in dry-run mode
+    if (this.config.extraPrompts && this.config.extraPrompts.length > 0) {
+      info(`[DRY-RUN] Iteration ${i}: Would append ${this.config.extraPrompts.length} extra prompt(s):`);
+      for (const prompt of this.config.extraPrompts) {
+        const preview = prompt.length > 100 ? prompt.slice(0, 97) + '...' : prompt;
+        info(`[DRY-RUN]   - ${preview}`);
+      }
+    }
 
     // Simulate completing the story (in-memory only — never persist dry-run state to prd.json)
     info(`[DRY-RUN] Iteration ${i}: Simulating completion of ${story.id}`);

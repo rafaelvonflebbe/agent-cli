@@ -131,6 +131,8 @@ export interface AgentConfig {
   acp?: boolean;
   /** Specific story IDs to run (comma-separated). Skips priority ordering. */
   storyIds?: string[];
+  /** Extra prompt instructions appended each iteration (from --prompt flags) */
+  extraPrompts?: string[];
 }
 
 /**

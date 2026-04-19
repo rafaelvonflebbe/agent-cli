@@ -35,7 +35,7 @@
         "List actionable improvements as future stories"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Use /playwright-cli skill in headed mode to browse the AI SDK documentation. Navigate to https://ai-sdk.dev/docs/agents/loop-control and read the pages on maxSteps, stopWhen, onStepFinish, tool execution patterns, and structured output. Then visit related pages linked from there (multi-step reasoning, error handling). All research must be done via the browser — do not use web search or fetch tools. Write findings to .tmp/research/ai-sdk-loop-control.md with sections for each pattern, applicability to agent-cli, and actionable improvements."
     },
     {
@@ -95,7 +95,7 @@
         "npm run build passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Reuses the same prompt suffix injection pattern from US-071 (buildTargetDirective). Add a config.extraPrompt field (string[]) populated from --prompt flags. Append after the --story directive in both runLegacyIteration and runACPIteration. Common use cases: commit/push after stories, run tests, create PRs, notify via Slack."
     },
     {

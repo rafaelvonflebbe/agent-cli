@@ -10,8 +10,8 @@ import { runAgent } from './core/iterator.js';
 import { runInit } from './core/init.js';
 import { createSessionManager } from './core/session.js';
 import { error, success, info, warn } from './utils/logger.js';
-import { fileExistsSync } from './utils/file-utils.js';
-import { join } from 'path';
+import { fileExistsSync, readText } from './utils/file-utils.js';
+import { join, resolve } from 'path';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { createPRDManager } from './core/prd.js';
@@ -51,7 +51,8 @@ program
   .option('--permission-mode <mode>', 'Permission mode: scoped (default, allowlisted tools only) or yolo (skip all permissions, full access)', 'scoped')
   .option('--acp', 'Force ACP (Agent Client Protocol) mode instead of legacy spawn')
   .option('--story <ids>', 'Run specific story IDs (comma-separated, e.g., US-068,US-070)')
-  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; projectDirectory?: string; stories?: string; resume?: boolean; sandbox?: boolean; permissionMode: string; acp?: boolean; story?: string }) => {
+  .option('--prompt <text-or-path>', 'Extra instructions appended to each iteration prompt (can be repeated). If value ends with .md and file exists, reads file content', (value: string, previous: string[]) => previous.concat([value]), [] as string[])
+  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; projectDirectory?: string; stories?: string; resume?: boolean; sandbox?: boolean; permissionMode: string; acp?: boolean; story?: string; prompt?: string[] }) => {
     try {
       // Handle --init mode
       if (options.init) {
@@ -113,6 +114,25 @@ program
         }
       }
 
+      // Resolve --prompt flags: auto-detect .md files vs literal text
+      let extraPrompts: string[] | undefined;
+      if (options.prompt && options.prompt.length > 0) {
+        extraPrompts = [];
+        for (const val of options.prompt) {
+          if (val.endsWith('.md')) {
+            const promptFilePath = resolve(options.directory, val);
+            if (!fileExistsSync(promptFilePath)) {
+              error(`--prompt file not found: ${val} (resolved to ${promptFilePath})`);
+              process.exit(1);
+            }
+            const content = await readText(promptFilePath);
+            extraPrompts.push(content.trim());
+          } else {
+            extraPrompts.push(val);
+          }
+        }
+      }
+
       const config = createConfig({
         tool: options.tool,
         directory: options.directory,
@@ -125,6 +145,7 @@ program
         permissionMode,
         acp: options.acp,
         storyIds,
+        extraPrompts,
       });
 
       // Check for existing session
