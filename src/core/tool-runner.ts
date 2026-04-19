@@ -4,7 +4,7 @@
 
 import { spawn } from 'child_process';
 import { createReadStream, createWriteStream, writeFileSync, mkdirSync, type WriteStream } from 'fs';
-import type { ToolResult, ToolType, SandboxConfig, PermissionMode } from './types.js';
+import type { ToolResult, ToolType, SandboxConfig, PermissionMode, TokenUsage } from './types.js';
 import { getToolCommand, getToolConfig, SCOPED_ALLOWED_TOOLS } from './config.js';
 import { join } from 'path';
 import { info, error, iterationHeader } from '../utils/logger.js';
@@ -104,10 +104,11 @@ function createStreamEventHandler(logStream?: WriteStream) {
   let currentToolName: string | null = null;
   let inputJsonBuffer = '';
 
-  return function handleStreamEvent(line: string): { completed: boolean; cost?: number; duration?: number } {
+  return function handleStreamEvent(line: string): { completed: boolean; cost?: number; duration?: number; tokenUsage?: TokenUsage } {
     let completed = false;
     let cost: number | undefined;
     let duration: number | undefined;
+    let tokenUsage: TokenUsage | undefined;
 
     let event: Record<string, unknown>;
     try {
@@ -185,9 +186,23 @@ function createStreamEventHandler(logStream?: WriteStream) {
       if (event.duration_ms !== undefined) {
         duration = Number(event.duration_ms);
       }
+
+      // Capture token usage from stream-json result event
+      const inputTokens = event.input_tokens as number | undefined;
+      const outputTokens = event.output_tokens as number | undefined;
+      const cacheCreation = event.cache_creation_input_tokens as number | undefined;
+      const cacheRead = event.cache_read_input_tokens as number | undefined;
+      if (inputTokens !== undefined || outputTokens !== undefined) {
+        tokenUsage = {
+          inputTokens: inputTokens ?? 0,
+          outputTokens: outputTokens ?? 0,
+          cacheCreationInputTokens: cacheCreation ?? 0,
+          cacheReadInputTokens: cacheRead ?? 0,
+        };
+      }
     }
 
-    return { completed, cost, duration };
+    return { completed, cost, duration, tokenUsage };
   };
 }
 
@@ -294,6 +309,7 @@ export class ToolRunner {
     let completed = false;
     let totalCostUsd: number | undefined;
     let durationMs: number | undefined;
+    let totalTokenUsage: TokenUsage | undefined;
 
     if (usesStreamJson) {
       // Parse stream-json events line-by-line
@@ -315,6 +331,16 @@ export class ToolRunner {
             if (result.completed) completed = true;
             if (result.cost !== undefined) totalCostUsd = result.cost;
             if (result.duration !== undefined) durationMs = result.duration;
+            if (result.tokenUsage) {
+              if (!totalTokenUsage) {
+                totalTokenUsage = result.tokenUsage;
+              } else {
+                totalTokenUsage.inputTokens += result.tokenUsage.inputTokens;
+                totalTokenUsage.outputTokens += result.tokenUsage.outputTokens;
+                totalTokenUsage.cacheCreationInputTokens += result.tokenUsage.cacheCreationInputTokens;
+                totalTokenUsage.cacheReadInputTokens += result.tokenUsage.cacheReadInputTokens;
+              }
+            }
           }
         }
       });
@@ -339,12 +365,16 @@ export class ToolRunner {
     // Wait for process to complete
     return new Promise<ToolResult>((resolve) => {
       proc.on('close', (code, signal) => {
-        // Write cost/duration summary to log before closing
+        // Write cost/duration/token summary to log before closing
         if (totalCostUsd !== undefined) {
           logStream.write(`Cost: $${totalCostUsd.toFixed(4)}\n`);
         }
         if (durationMs !== undefined) {
           logStream.write(`Duration: ${formatDuration(durationMs)}\n`);
+        }
+        if (totalTokenUsage) {
+          const total = totalTokenUsage.inputTokens + totalTokenUsage.cacheReadInputTokens + totalTokenUsage.cacheCreationInputTokens;
+          logStream.write(`Tokens: ${total} input, ${totalTokenUsage.outputTokens} output, ${totalTokenUsage.cacheReadInputTokens} cache read, ${totalTokenUsage.cacheCreationInputTokens} cache write\n`);
         }
         logStream.end();
 
@@ -359,6 +389,9 @@ export class ToolRunner {
         if (durationMs !== undefined) {
           info(`Duration: ${formatDuration(durationMs)}`);
         }
+        if (totalTokenUsage) {
+          info(`Tokens: ${totalTokenUsage.inputTokens} input, ${totalTokenUsage.outputTokens} output, ${totalTokenUsage.cacheReadInputTokens} cache read, ${totalTokenUsage.cacheCreationInputTokens} cache write`);
+        }
 
         const result: ToolResult = {
           exitCode: code,
@@ -368,6 +401,7 @@ export class ToolRunner {
           signal: signal || null,
           totalCostUsd,
           durationMs,
+          tokenUsage: totalTokenUsage,
         };
 
         resolve(result);

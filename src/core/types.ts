@@ -96,6 +96,8 @@ export interface ToolResult {
   totalCostUsd?: number;
   /** Duration in milliseconds (claude stream-json only) */
   durationMs?: number;
+  /** Token usage breakdown from stream-json result event */
+  tokenUsage?: TokenUsage;
 }
 
 /**
@@ -162,6 +164,26 @@ export interface ArchiveCheckResult {
 }
 
 /**
+ * Token usage breakdown from a single iteration.
+ */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+}
+
+/**
+ * Cumulative token usage tracked across iterations.
+ */
+export interface TokenSession {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheCreationTokens: number;
+  totalCacheReadTokens: number;
+}
+
+/**
  * Session state persisted between interrupted runs.
  * Managed by the session reducer — all transitions via dispatch.
  */
@@ -188,6 +210,8 @@ export interface SessionState {
   totalCostUsd?: number;
   /** Total duration in ms accumulated across ACP iterations */
   totalDurationMs?: number;
+  /** Cumulative token usage across iterations */
+  tokens?: TokenSession;
   /** Session start time as epoch ms */
   sessionStartTime?: number;
   /** Whether stopWhen was triggered this session */

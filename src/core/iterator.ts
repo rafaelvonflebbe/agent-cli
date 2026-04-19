@@ -2,7 +2,8 @@
  * Agent Iterator - main loop orchestration
  */
 
-import type { AgentConfig, UserStory } from './types.js';
+import type { AgentConfig, UserStory, TokenUsage } from './types.js';
+import { formatIterationContextReport, formatSessionTokenSummary } from './context-window.js';
 import { resolve } from 'path';
 import { createPRDManager, PRDManager } from './prd.js';
 import { createArchiver, Archiver } from './archiver.js';
@@ -182,6 +183,7 @@ export class AgentIterator {
 
       try {
         let iterationChanges: FileChange[] = [];
+        let iterationTokenUsage: TokenUsage | undefined;
 
         // Save current story passes state to detect completions
         const passesBefore = new Map<string, boolean>();
@@ -200,7 +202,7 @@ export class AgentIterator {
         if (this.config.dryRun) {
           await this.runDryIteration(i);
         } else {
-          await this.runLiveIteration(i);
+          iterationTokenUsage = await this.runLiveIteration(i);
         }
 
         // Reload PRD to get updated status (skip in dry-run to preserve in-memory state)
@@ -258,7 +260,7 @@ export class AgentIterator {
 
         // Dispatch iteration finished (non-ACP paths — ACP dispatches inside runACPIteration)
         if (!this.useACP) {
-          await this.store!.dispatch({ type: 'ITERATION_FINISHED', iteration: i });
+          await this.store!.dispatch({ type: 'ITERATION_FINISHED', iteration: i, tokenUsage: iterationTokenUsage });
         }
 
         const state = this.store.getState();
@@ -276,10 +278,13 @@ export class AgentIterator {
           warn(`stopWhen triggered: ${stopResult.reason}`);
           info(`Progress: ${status.completed}/${status.total} stories complete.`);
           info(`Total session time: ${totalDuration}`);
+          const tokenSummary = formatSessionTokenSummary(state.tokens);
+          if (tokenSummary) info(tokenSummary);
           await this.logProgress(
             `STOPWHEN TRIGGERED — ${stopResult.reason}. ` +
             `Overall progress: ${status.completed}/${status.total} stories complete. ` +
-            `Total session time: ${totalDuration}`
+            `Total session time: ${totalDuration}` +
+            (tokenSummary ? `. ${tokenSummary}` : '')
           );
           return;
         }
@@ -292,10 +297,13 @@ export class AgentIterator {
           const totalDuration = formatDuration(Date.now() - (state.sessionStartTime ?? Date.now()));
           info(`Stories limit reached: ${storiesCompletedThisRun}/${this.config.maxStories} stories completed this run.`);
           info(`Total session time: ${totalDuration}`);
+          const tokenSummary = formatSessionTokenSummary(state.tokens);
+          if (tokenSummary) info(tokenSummary);
           await this.logProgress(
             `STORIES LIMIT REACHED — ${storiesCompletedThisRun}/${this.config.maxStories} stories completed this run. ` +
             `Overall progress: ${status.completed}/${status.total} stories complete. ` +
-            `Total session time: ${totalDuration}`
+            `Total session time: ${totalDuration}` +
+            (tokenSummary ? `. ${tokenSummary}` : '')
           );
           return;
         }
@@ -324,8 +332,11 @@ export class AgentIterator {
         const storyInfo = nextStory
           ? `Next incomplete story: ${nextStory.id} "${nextStory.title}" (priority ${nextStory.priority})`
           : this.config.storyIds ? 'All targeted stories complete' : 'All stories complete';
+        const updatedState = this.store.getState();
+        const contextReport = formatIterationContextReport(iterationTokenUsage, updatedState.tokens);
         await this.logProgress(
-          `Iteration ${i} — Progress: ${status.completed}/${status.total} stories complete. ${storyInfo}`
+          `Iteration ${i} — Progress: ${status.completed}/${status.total} stories complete. ${storyInfo}` +
+          (contextReport ? ` | ${contextReport}` : '')
         );
 
         // Wait before next iteration
@@ -348,11 +359,19 @@ export class AgentIterator {
     const finalStatus = this.prdManager.getStatus();
     info(`Final progress: ${finalStatus.completed}/${finalStatus.total} stories complete.`);
     info(`Total session time: ${totalDuration}`);
+
+    // Report session token summary
+    const tokenSummary = formatSessionTokenSummary(state.tokens);
+    if (tokenSummary) {
+      info(tokenSummary);
+    }
+
     info('Check progress.log for details.');
     await this.logProgress(
       `WARNING: Max iterations (${this.config.maxIterations}) reached without completion. ` +
       `Final progress: ${finalStatus.completed}/${finalStatus.total} stories complete. ` +
-      `Total session time: ${totalDuration}`
+      `Total session time: ${totalDuration}` +
+      (tokenSummary ? `. ${tokenSummary}` : '')
     );
   }
 
@@ -453,21 +472,21 @@ export class AgentIterator {
   /**
    * Run a single live iteration (spawns external tool or uses ACP client)
    */
-  private async runLiveIteration(i: number): Promise<void> {
+  private async runLiveIteration(i: number): Promise<TokenUsage | undefined> {
     const story = this.getTargetStory();
     iterationHeader(i, this.config.maxIterations, this.config.tool, story ? { id: story.id, title: story.title, priority: story.priority } : undefined);
 
     if (this.useACP) {
-      await this.runACPIteration(i);
+      return this.runACPIteration(i);
     } else {
-      await this.runLegacyIteration(i);
+      return this.runLegacyIteration(i);
     }
   }
 
   /**
    * Run a single iteration via the legacy tool-runner (spawn + stdout)
    */
-  private async runLegacyIteration(i: number): Promise<void> {
+  private async runLegacyIteration(i: number): Promise<TokenUsage | undefined> {
     const suffix = this.buildPromptSuffix();
     const result = await this.toolRunner.run(i, this.config.maxIterations, suffix ? { promptSuffix: suffix } : undefined);
 
@@ -477,11 +496,22 @@ export class AgentIterator {
       throw new Error('Tool execution failed');
     }
 
+    // Report token usage if available
+    if (result.tokenUsage) {
+      const contextReport = formatIterationContextReport(result.tokenUsage, undefined);
+      if (contextReport) {
+        info(contextReport);
+        this.acpLogStream?.write(`${contextReport}\n`);
+      }
+    }
+
     // Check for completion signal
     if (result.completed) {
       await this.handleComplete();
-      return;
+      return result.tokenUsage;
     }
+
+    return result.tokenUsage;
   }
 
   /**
@@ -489,8 +519,9 @@ export class AgentIterator {
    * Initializes the client on first call, then reuses the connection.
    * Sends the prompt file content as a text block and collects structured results.
    * Persists ACP session ID to .session.json for resumption on interruption.
+   * Returns token usage if available from the ACP response.
    */
-  private async runACPIteration(i: number): Promise<void> {
+  private async runACPIteration(i: number): Promise<TokenUsage | undefined> {
     // Initialize or re-initialize the ACP client if needed
     if (!this.acpClient || !this.acpClient.isConnected()) {
       await this.initializeACPClient();
@@ -540,13 +571,36 @@ export class AgentIterator {
     // The main loop's ITERATION_FINISHED dispatch will overwrite the iteration counter
     // but accumulate cost/duration additively, so we dispatch here with the ACP data.
     const currentSessionId = this.acpClient!.getSessionId();
+
+    // Extract token usage from ACP result
+    const acpTokenUsage: TokenUsage | undefined = result.usage
+      ? {
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          cacheCreationInputTokens: result.usage.cachedWriteTokens ?? 0,
+          cacheReadInputTokens: result.usage.cachedReadTokens ?? 0,
+        }
+      : undefined;
+
+    // Report per-iteration token usage
+    if (acpTokenUsage) {
+      const contextReport = formatIterationContextReport(acpTokenUsage, undefined);
+      if (contextReport) {
+        info(contextReport);
+        this.acpLogStream?.write(`${contextReport}\n`);
+      }
+    }
+
     await this.store!.dispatch({
       type: 'ITERATION_FINISHED',
       iteration: i,
       costUsd: result.cost?.amount,
       durationMs,
       acpSessionId: currentSessionId ?? undefined,
+      tokenUsage: acpTokenUsage,
     });
+
+    return acpTokenUsage;
   }
 
   /**
@@ -839,6 +893,13 @@ export class AgentIterator {
       if (totalDuration > 0) {
         this.acpLogStream.write(`Total duration: ${formatDuration(totalDuration)}\n`);
       }
+
+      // Write token summary to log
+      const tokenSummary = formatSessionTokenSummary(state?.tokens);
+      if (tokenSummary) {
+        this.acpLogStream.write(`${tokenSummary}\n`);
+      }
+
       this.acpLogStream.end();
       this.acpLogStream = null;
     }
@@ -894,6 +955,13 @@ export class AgentIterator {
     success(`Completed at iteration ${iteration} of ${this.config.maxIterations}`);
     info(`Total stories: ${finalStatus.total} | Completed: ${finalStatus.completed}`);
     info(`Total session time: ${totalDuration}`);
+
+    // Report session token summary
+    const tokenSummary = formatSessionTokenSummary(state.tokens);
+    if (tokenSummary) {
+      info(tokenSummary);
+    }
+
     if (this.config.maxStories) {
       info(`Stories completed this run: ${storiesCompletedThisRun}/${this.config.maxStories}`);
     }
@@ -903,7 +971,8 @@ export class AgentIterator {
       `ALL COMPLETE — Finished at iteration ${iteration}/${this.config.maxIterations}. ` +
       `Total stories: ${finalStatus.total}, Completed: ${finalStatus.completed}` +
       (this.config.maxStories ? `, This run: ${storiesCompletedThisRun}/${this.config.maxStories}` : '') +
-      `. Total session time: ${totalDuration}`
+      `. Total session time: ${totalDuration}` +
+      (tokenSummary ? `. ${tokenSummary}` : '')
     );
   }
 

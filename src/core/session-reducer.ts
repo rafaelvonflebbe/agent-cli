@@ -5,7 +5,7 @@
  * after every dispatch (single write point).
  */
 
-import type { SessionState } from './types.js';
+import type { SessionState, TokenUsage, TokenSession } from './types.js';
 import { createSessionManager, type SessionManager } from './session.js';
 
 // ---------------------------------------------------------------------------
@@ -14,7 +14,7 @@ import { createSessionManager, type SessionManager } from './session.js';
 
 export type SessionAction =
   | { type: 'STORY_COMPLETED'; storyId: string }
-  | { type: 'ITERATION_FINISHED'; iteration: number; costUsd?: number; durationMs?: number; acpSessionId?: string }
+  | { type: 'ITERATION_FINISHED'; iteration: number; costUsd?: number; durationMs?: number; acpSessionId?: string; tokenUsage?: TokenUsage }
   | { type: 'SESSION_INTERRUPTED'; lastStoryId: string | null; acpSessionId?: string }
   | { type: 'BRANCH_CHANGED'; newBranch: string }
   | { type: 'STOPWHEN_TRIGGERED'; reason: string }
@@ -37,6 +37,7 @@ export function normalizeSessionState(raw: Partial<SessionState>): SessionState 
     storiesCompletedThisRun: raw.storiesCompletedThisRun ?? 0,
     totalCostUsd: raw.totalCostUsd ?? 0,
     totalDurationMs: raw.totalDurationMs ?? 0,
+    tokens: raw.tokens ?? { totalInputTokens: 0, totalOutputTokens: 0, totalCacheCreationTokens: 0, totalCacheReadTokens: 0 },
     sessionStartTime: raw.sessionStartTime ?? Date.now(),
     stopWhenTriggered: raw.stopWhenTriggered ?? false,
     stopWhenReason: raw.stopWhenReason,
@@ -60,15 +61,27 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
         timestamp,
       };
 
-    case 'ITERATION_FINISHED':
+    case 'ITERATION_FINISHED': {
+      const prevTokens: TokenSession = state.tokens ?? { totalInputTokens: 0, totalOutputTokens: 0, totalCacheCreationTokens: 0, totalCacheReadTokens: 0 };
+      const usage = action.tokenUsage;
+      const nextTokens: TokenSession = usage
+        ? {
+            totalInputTokens: prevTokens.totalInputTokens + usage.inputTokens,
+            totalOutputTokens: prevTokens.totalOutputTokens + usage.outputTokens,
+            totalCacheCreationTokens: prevTokens.totalCacheCreationTokens + usage.cacheCreationInputTokens,
+            totalCacheReadTokens: prevTokens.totalCacheReadTokens + usage.cacheReadInputTokens,
+          }
+        : prevTokens;
       return {
         ...state,
         currentIteration: action.iteration,
         totalCostUsd: (state.totalCostUsd ?? 0) + (action.costUsd ?? 0),
         totalDurationMs: (state.totalDurationMs ?? 0) + (action.durationMs ?? 0),
         acpSessionId: action.acpSessionId ?? state.acpSessionId,
+        tokens: nextTokens,
         timestamp,
       };
+    }
 
     case 'SESSION_INTERRUPTED':
       return {
@@ -138,6 +151,7 @@ export class SessionStore {
       storiesCompletedThisRun: 0,
       totalCostUsd: 0,
       totalDurationMs: 0,
+      tokens: { totalInputTokens: 0, totalOutputTokens: 0, totalCacheCreationTokens: 0, totalCacheReadTokens: 0 },
       sessionStartTime: Date.now(),
       stopWhenTriggered: false,
       stopWhenReason: undefined,

@@ -115,8 +115,25 @@
         "npm run build passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Legacy path: the stream-json result event already has total_cost_usd and duration_ms — extend to also capture token fields. ACP path: usage events already emit to the event bus — aggregate them. Known context windows: claude-sonnet-4-6/claude-opus-4-7 = 200k tokens. This helps users understand when they're approaching context limits and plan story granularity accordingly."
+    },
+    {
+      "id": "US-074",
+      "title": "Test US-073 context window tracking implementation",
+      "description": "Verify that US-073 (context window usage tracking) is working correctly by running agent-cli and checking that token counts are captured and reported in the CLI output, .agent-output.log, and .session.json.",
+      "acceptanceCriteria": [
+        "Run agent-cli 1 --tool claude --story US-073 and verify token counts appear in iteration output",
+        "CLI output shows format: 'Context: Xk/200k (Y%) | Cache hit: Z%'",
+        ".agent-output.log contains per-iteration token breakdown (input, output, cache read, cache write)",
+        ".session.json has totalTokens field with cumulative token data after run",
+        "Session summary at end shows total tokens and context % used",
+        "Dry-run mode gracefully skips token reporting (no data available)",
+        "Run with --resume and verify token data accumulates correctly across sessions"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Run: agent-cli 2 --tool claude --story US-069 --prompt 'report token usage in output'. Then check: .agent-output.log for token lines, .session.json for totalTokens. Also test dry-run: agent-cli 2 --dry-run (should not crash or show zero tokens)."
     }
   ]
 }
