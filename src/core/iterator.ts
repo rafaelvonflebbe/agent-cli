@@ -584,6 +584,8 @@ export class AgentIterator {
 
     // Report per-iteration token usage
     if (acpTokenUsage) {
+      const total = acpTokenUsage.inputTokens + acpTokenUsage.cacheReadInputTokens + acpTokenUsage.cacheCreationInputTokens;
+      this.acpLogStream?.write(`Tokens: ${total} input, ${acpTokenUsage.outputTokens} output, ${acpTokenUsage.cacheReadInputTokens} cache read, ${acpTokenUsage.cacheCreationInputTokens} cache write\n`);
       const contextReport = formatIterationContextReport(acpTokenUsage, undefined);
       if (contextReport) {
         info(contextReport);

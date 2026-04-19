@@ -77,16 +77,33 @@ export function contextUtilization(tokens: TokenSession | undefined, contextWind
 }
 
 /**
+ * Check whether a token session or usage object has any non-zero values.
+ */
+function hasTokenData(tokens: TokenUsage | TokenSession | undefined): boolean {
+  if (!tokens) return false;
+  if ('totalInputTokens' in tokens) {
+    return (tokens as TokenSession).totalInputTokens > 0
+      || (tokens as TokenSession).totalOutputTokens > 0
+      || (tokens as TokenSession).totalCacheCreationTokens > 0
+      || (tokens as TokenSession).totalCacheReadTokens > 0;
+  }
+  return (tokens as TokenUsage).inputTokens > 0
+    || (tokens as TokenUsage).outputTokens > 0
+    || (tokens as TokenUsage).cacheCreationInputTokens > 0
+    || (tokens as TokenUsage).cacheReadInputTokens > 0;
+}
+
+/**
  * Format a per-iteration context window report line.
  * Example: "Context: 45.2k/200k (22.6%) | Cache hit: 78%"
- * Returns null if no token data available.
+ * Returns null if no token data available (or all zeros, e.g. dry-run mode).
  */
 export function formatIterationContextReport(
   tokens: TokenUsage | undefined,
   cumulativeTokens: TokenSession | undefined,
   model?: string,
 ): string | null {
-  if (!tokens && !cumulativeTokens) return null;
+  if (!hasTokenData(tokens) && !hasTokenData(cumulativeTokens)) return null;
 
   const windowSize = getContextWindowSize(model);
   const input = cumulativeTokens
@@ -100,13 +117,13 @@ export function formatIterationContextReport(
 
 /**
  * Format a session summary report with cumulative token statistics.
- * Returns null if no token data available.
+ * Returns null if no token data available (or all zeros, e.g. dry-run mode).
  */
 export function formatSessionTokenSummary(
   tokens: TokenSession | undefined,
   model?: string,
 ): string | null {
-  if (!tokens) return null;
+  if (!tokens || !hasTokenData(tokens)) return null;
 
   const windowSize = getContextWindowSize(model);
   const totalInput = tokens.totalInputTokens;

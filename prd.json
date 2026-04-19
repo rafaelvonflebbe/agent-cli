@@ -132,7 +132,7 @@
         "Run with --resume and verify token data accumulates correctly across sessions"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Run: agent-cli 2 --tool claude --story US-069 --prompt 'report token usage in output'. Then check: .agent-output.log for token lines, .session.json for totalTokens. Also test dry-run: agent-cli 2 --dry-run (should not crash or show zero tokens)."
     }
   ]
