@@ -2,21 +2,26 @@
  * Agent Iterator - main loop orchestration
  */
 
-import type { AgentConfig } from './types.js';
+import type { AgentConfig, UserStory } from './types.js';
 import { resolve } from 'path';
 import { createPRDManager, PRDManager } from './prd.js';
 import { createArchiver, Archiver } from './archiver.js';
 import { createToolRunner, ToolRunner } from './tool-runner.js';
 import { createSessionManager, SessionManager } from './session.js';
-import { validateConfig } from './config.js';
+import { validateConfig, isACPProvider } from './config.js';
 import { info, success, error, warn, iterationHeader } from '../utils/logger.js';
-import { appendText } from '../utils/file-utils.js';
+import { appendText, readText } from '../utils/file-utils.js';
 import { captureGitStatus, diffGitStatus, displayFileChanges, branchExists, getCurrentBranch } from '../utils/git-utils.js';
 import type { FileChange } from '../utils/git-utils.js';
 import { notifyStoryComplete, isTelegramConfigured } from './telegram.js';
 import { formatDuration } from '../utils/format-utils.js';
 import chalk from 'chalk';
 import { join } from 'path';
+import { createWriteStream, type WriteStream } from 'fs';
+import { createACPClient, type ACPClient, type ACPEvent, type ACPPromptResult } from './acp-client.js';
+import { getACPRegistry } from './acp-registry.js';
+import { resolveAcpMcpServers } from './mcp-config.js';
+import { resolvePromptFile } from './prompt-resolver.js';
 
 /**
  * Agent Iterator class
@@ -34,19 +39,41 @@ export class AgentIterator {
   private sessionCompletedIds: string[] = [];
   private sessionStartTime: number = 0;
 
+  /** ACP client fields — used when tool is an ACP provider */
+  private readonly useACP: boolean;
+  private acpClient: ACPClient | null = null;
+  private acpLogStream: WriteStream | null = null;
+  private acpTotalCost: number = 0;
+  private acpTotalDuration: number = 0;
+
+  /** SIGINT handler reference for cleanup */
+  private sigintHandler: (() => void) | null = null;
+  /** Whether this run is a resumed ACP session */
+  private isResumedSession: boolean = false;
+
   constructor(config: AgentConfig) {
     validateConfig(config);
     this.config = config;
     this.prdManager = createPRDManager(config.directory);
     this.archiver = createArchiver(config.directory);
-    this.toolRunner = createToolRunner(
-      config.directory,
-      config.tool,
-      config.completionSignal,
-      config.sandbox,
-      config.permissionMode,
-      config.projectDirectory
-    );
+    this.useACP = config.acp === true || isACPProvider(config.tool);
+
+    if (this.useACP) {
+      // Placeholder tool runner — won't be used for ACP path
+      this.toolRunner = createToolRunner(
+        config.directory, config.tool, config.completionSignal,
+        config.sandbox, config.permissionMode, config.projectDirectory,
+      );
+    } else {
+      this.toolRunner = createToolRunner(
+        config.directory,
+        config.tool,
+        config.completionSignal,
+        config.sandbox,
+        config.permissionMode,
+        config.projectDirectory,
+      );
+    }
     this.sessionManager = createSessionManager(config.directory);
     this.progressFilePath = join(config.directory, 'progress.log');
   }
@@ -56,9 +83,14 @@ export class AgentIterator {
    */
   async run(): Promise<void> {
     const mode = this.config.dryRun ? 'DRY-RUN' : 'LIVE';
-    const sandboxInfo = this.config.sandbox ? ' - Sandbox: ON' : '';
+    const sandboxInfo = this.useACP
+      ? ' - FS boundaries: ACP (protocol-level)'
+      : this.config.sandbox
+        ? ' - Sandbox: Docker'
+        : '';
     const storiesLimit = this.config.maxStories ? ` - Stories limit: ${this.config.maxStories}` : '';
-    info(`Starting Agent CLI [${mode}] - Tool: ${this.config.tool} - Max iterations: ${this.config.maxIterations}${sandboxInfo}${storiesLimit}`);
+    const protocolInfo = this.useACP ? ' (ACP)' : '';
+    info(`Starting Agent CLI [${mode}] - Tool: ${this.config.tool}${protocolInfo} - Max iterations: ${this.config.maxIterations}${sandboxInfo}${storiesLimit}`);
 
     this.sessionStartTime = Date.now();
 
@@ -71,19 +103,28 @@ export class AgentIterator {
     await this.prdManager.load();
     this.branchName = this.prdManager.getBranchName();
 
+    // Validate --story IDs against PRD
+    if (this.config.storyIds && this.config.storyIds.length > 0) {
+      this.validateTargetStories(this.config.storyIds);
+      info(`Target stories: ${this.config.storyIds.join(', ')}`);
+    }
+
     // Resolve projectDirectory from PRD (overrides config if set)
     const prdProjectDir = this.prdManager.getPRD().projectDirectory;
     if (prdProjectDir) {
       const resolved = resolve(this.config.directory, prdProjectDir);
       this.config = { ...this.config, projectDirectory: resolved };
-      this.toolRunner = createToolRunner(
-        this.config.directory,
-        this.config.tool,
-        this.config.completionSignal,
-        this.config.sandbox,
-        this.config.permissionMode,
-        resolved
-      );
+      // Re-create tool runner for legacy path with the resolved projectDirectory
+      if (!this.useACP) {
+        this.toolRunner = createToolRunner(
+          this.config.directory,
+          this.config.tool,
+          this.config.completionSignal,
+          this.config.sandbox,
+          this.config.permissionMode,
+          resolved,
+        );
+      }
       info(`Project directory: ${resolved}`);
     }
 
@@ -120,11 +161,21 @@ export class AgentIterator {
         const session = await this.sessionManager.load();
         this.sessionCompletedIds = session.completedStoryIds;
         this.iterationCount = session.currentIteration;
-        info(`Resuming session: ${this.sessionCompletedIds.length} stories already completed, starting at iteration ${this.iterationCount + 1}`);
+
+        // ACP session resumption: if we have an ACP session ID, use LoadSession
+        if (this.useACP && session.acpSessionId) {
+          this.isResumedSession = true;
+          info(`Resuming ACP session: ${this.sessionCompletedIds.length} stories already completed, ACP session ${session.acpSessionId}, starting at iteration ${this.iterationCount + 1}`);
+        } else {
+          info(`Resuming session: ${this.sessionCompletedIds.length} stories already completed, starting at iteration ${this.iterationCount + 1}`);
+        }
       }
     } else {
       await this.sessionManager.create(this.config.tool, this.branchName);
     }
+
+    // Register SIGINT handler for graceful shutdown
+    this.registerSigintHandler();
 
     // Track accumulated file changes per story for completion reports
     const storyChanges = new Map<string, FileChange[]>();
@@ -144,7 +195,7 @@ export class AgentIterator {
         }
 
         // Get target story for this iteration
-        const targetStory = this.prdManager.getStatus().nextStory;
+        const targetStory = this.getTargetStory();
 
         // Capture git status before live iterations (skip in dry-run)
         // Use projectDirectory for git ops when set (that's where the AI tool makes changes)
@@ -222,6 +273,7 @@ export class AgentIterator {
 
         // Check if stories limit has been reached
         if (this.config.maxStories && this.storiesCompletedThisRun >= this.config.maxStories) {
+          await this.cleanupACP();
           const status = this.prdManager.getStatus();
           const totalDuration = formatDuration(Date.now() - this.sessionStartTime);
           info(`Stories limit reached: ${this.storiesCompletedThisRun}/${this.config.maxStories} stories completed this run.`);
@@ -234,8 +286,17 @@ export class AgentIterator {
           return;
         }
 
-        // Check if all stories are complete
-        if (this.prdManager.areAllStoriesComplete()) {
+        // Check if all target stories are complete (all stories when no --story filter)
+        if (this.config.storyIds && this.config.storyIds.length > 0) {
+          const allTargetsComplete = this.config.storyIds.every(id => {
+            const s = this.prdManager.getPRD().userStories.find(us => us.id === id);
+            return s?.passes === true;
+          });
+          if (allTargetsComplete) {
+            await this.handleComplete();
+            return;
+          }
+        } else if (this.prdManager.areAllStoriesComplete()) {
           await this.handleComplete();
           return;
         }
@@ -250,10 +311,10 @@ export class AgentIterator {
         });
 
         // Log iteration to progress.log
-        const nextStory = status.nextStory;
+        const nextStory = this.getTargetStory();
         const storyInfo = nextStory
           ? `Next incomplete story: ${nextStory.id} "${nextStory.title}" (priority ${nextStory.priority})`
-          : 'All stories complete';
+          : this.config.storyIds ? 'All targeted stories complete' : 'All stories complete';
         await this.logProgress(
           `Iteration ${i} — Progress: ${status.completed}/${status.total} stories complete. ${storyInfo}`
         );
@@ -263,6 +324,7 @@ export class AgentIterator {
           await this.sleep(this.config.iterationDelay);
         }
       } catch (err) {
+        await this.cleanupACP();
         const message = err instanceof Error ? err.message : String(err);
         error(`Iteration ${i} failed: ${message}`);
         throw err;
@@ -270,6 +332,7 @@ export class AgentIterator {
     }
 
     // Max iterations reached without completion
+    await this.cleanupACP();
     const totalDuration = formatDuration(Date.now() - this.sessionStartTime);
     warn(`Max iterations (${this.config.maxIterations}) reached without completing all tasks.`);
     const finalStatus = this.prdManager.getStatus();
@@ -284,13 +347,69 @@ export class AgentIterator {
   }
 
   /**
-   * Run a single live iteration (spawns external tool)
+   * Validate that targeted story IDs exist in PRD and dependencies are met.
+   * @throws Error if any ID is missing or dependencies are unmet
+   */
+  private validateTargetStories(ids: string[]): void {
+    const prd = this.prdManager.getPRD();
+    const storyIds = new Set(prd.userStories.map(s => s.id));
+
+    for (const id of ids) {
+      if (!storyIds.has(id)) {
+        throw new Error(`Story '${id}' not found in prd.json. Available: ${[...storyIds].join(', ')}`);
+      }
+    }
+
+    for (const id of ids) {
+      const story = prd.userStories.find(s => s.id === id)!;
+      const unmet = this.prdManager.getUnmetDependencies(story);
+      if (unmet.length > 0) {
+        throw new Error(`Story '${id}' has unmet dependencies: ${unmet.join(', ')}`);
+      }
+      if (story.passes) {
+        warn(`Story '${id}' is already complete — will be skipped`);
+      }
+    }
+  }
+
+  /**
+   * Get the target story for the current iteration.
+   * When --story is set, returns the next incomplete targeted story (in order).
+   * Otherwise falls back to priority-based nextStory.
+   */
+  private getTargetStory(): UserStory | undefined {
+    if (this.config.storyIds && this.config.storyIds.length > 0) {
+      const prd = this.prdManager.getPRD();
+      for (const id of this.config.storyIds) {
+        const story = prd.userStories.find(s => s.id === id);
+        if (story && !story.passes) {
+          return story;
+        }
+      }
+      // All targeted stories are complete
+      return undefined;
+    }
+    return this.prdManager.getStatus().nextStory;
+  }
+
+  /**
+   * Run a single live iteration (spawns external tool or uses ACP client)
    */
   private async runLiveIteration(i: number): Promise<void> {
-    const status = this.prdManager.getStatus();
-    const story = status.nextStory;
+    const story = this.getTargetStory();
     iterationHeader(i, this.config.maxIterations, this.config.tool, story ? { id: story.id, title: story.title, priority: story.priority } : undefined);
 
+    if (this.useACP) {
+      await this.runACPIteration(i);
+    } else {
+      await this.runLegacyIteration(i);
+    }
+  }
+
+  /**
+   * Run a single iteration via the legacy tool-runner (spawn + stdout)
+   */
+  private async runLegacyIteration(i: number): Promise<void> {
     const result = await this.toolRunner.run(i, this.config.maxIterations);
 
     // Handle tool execution errors
@@ -307,19 +426,336 @@ export class AgentIterator {
   }
 
   /**
-   * Run a single dry-run iteration (simulates completion without spawning tools)
+   * Run a single iteration via the ACP client.
+   * Initializes the client on first call, then reuses the connection.
+   * Sends the prompt file content as a text block and collects structured results.
+   * Persists ACP session ID to .session.json for resumption on interruption.
    */
-  private async runDryIteration(i: number): Promise<void> {
-    const status = this.prdManager.getStatus();
+  private async runACPIteration(i: number): Promise<void> {
+    // Initialize or re-initialize the ACP client if needed
+    if (!this.acpClient || !this.acpClient.isConnected()) {
+      await this.initializeACPClient();
+    }
 
-    if (status.allComplete) {
-      info(`[DRY-RUN] Iteration ${i}: All stories already complete.`);
+    // Read the prompt file (project-level or global fallback)
+    const promptFile = await resolvePromptFile(this.config.directory);
+    const promptContent = await readText(promptFile);
+
+    const sessionId = this.acpClient!.getSessionId() ?? undefined;
+    const startTime = Date.now();
+
+    this.acpLogStream?.write(`\n--- Iteration ${i}/${this.config.maxIterations} (${this.config.tool})${this.isResumedSession ? ' [resumed]' : ''} ---\n`);
+
+    const result: ACPPromptResult = await this.acpClient!.sendPrompt(sessionId, promptContent);
+
+    const durationMs = Date.now() - startTime;
+    this.acpTotalDuration += durationMs;
+
+    // Persist ACP session ID for potential resumption on interruption
+    const currentSessionId = this.acpClient!.getSessionId();
+    if (currentSessionId) {
+      await this.sessionManager.update({
+        acpSessionId: currentSessionId,
+        currentIteration: i,
+      });
+    }
+
+    // Write summary to log
+    if (result.cost) {
+      this.acpLogStream?.write(`Cost: $${result.cost.amount.toFixed(4)} ${result.cost.currency}\n`);
+    }
+    this.acpLogStream?.write(`Duration: ${formatDuration(durationMs)}\n`);
+    this.acpLogStream?.write(`Stop reason: ${result.stopReason}\n`);
+
+    // Report cost/duration to CLI
+    if (result.cost) {
+      this.acpTotalCost += result.cost.amount;
+      info(`Iteration cost: $${result.cost.amount.toFixed(4)} ${result.cost.currency}`);
+    }
+    info(`Iteration duration: ${formatDuration(durationMs)}`);
+    info(`Stop reason: ${result.stopReason}`);
+  }
+
+  /**
+   * Initialize the ACP client: resolve provider, launch agent subprocess,
+   * create session with MCP servers, and set up event-driven logging.
+   *
+   * When resuming an interrupted session that has a saved ACP session ID,
+   * uses LoadSession instead of creating a new session. If the session is
+   * expired or load fails, falls back to creating a new session with a
+   * summary of what happened previously.
+   */
+  private async initializeACPClient(): Promise<void> {
+    const registry = await getACPRegistry();
+    const provider = await registry.resolve(this.config.tool);
+
+    this.acpClient = createACPClient();
+
+    const projectDir = this.config.projectDirectory || this.config.directory;
+
+    // Build additionalDirectories for filesystem scope:
+    // Include the config directory (where prd.json lives) when it differs from
+    // the project directory so agents can read/write both locations.
+    const additionalDirectories: string[] = [];
+    if (this.config.projectDirectory && this.config.projectDirectory !== this.config.directory) {
+      additionalDirectories.push(this.config.directory);
+    }
+
+    // Resolve MCP servers from provider defaults, PRD, and project config
+    const mcpServers = await resolveAcpMcpServers({
+      prd: this.prdManager.getPRD(),
+      provider,
+      projectDir: this.config.directory,
+    });
+
+    // Set up log file for real-time output
+    const logPath = join(this.config.directory, '.agent-output.log');
+    this.acpLogStream = createWriteStream(logPath, { flags: this.isResumedSession ? 'a' : 'w' });
+
+    // Subscribe to ACP events for logging
+    this.acpClient.on((event: ACPEvent) => {
+      this.handleACPEvent(event);
+    });
+
+    // Launch agent subprocess (handshake only, no session yet)
+    info(`ACP: Launching provider '${provider.name}': ${provider.command} ${provider.args.join(' ')}`);
+    await this.acpClient.launch(
+      {
+        command: provider.command,
+        args: provider.args,
+        cwd: projectDir,
+        env: provider.env,
+      },
+    );
+
+    // Attempt to resume an existing ACP session if available
+    if (this.isResumedSession) {
+      const session = await this.sessionManager.load();
+      const savedSessionId = session.acpSessionId;
+
+      if (savedSessionId && this.acpClient.getAgentCapabilities()?.loadSession) {
+        try {
+          info(`ACP: Loading previous session ${savedSessionId}`);
+          await this.acpClient.loadSession(savedSessionId, {
+            cwd: projectDir,
+            mcpServers: mcpServers.length > 0 ? mcpServers : undefined,
+            additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
+          });
+
+          this.acpLogStream?.write(`\n--- Session Resumed (${savedSessionId}) ---\n`);
+          info(`ACP: Successfully resumed session ${savedSessionId}`);
+          return;
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          warn(`ACP: Failed to load session ${savedSessionId}: ${message}`);
+          warn('ACP: Session may have expired. Starting a new session with summary context.');
+          // Fall through to create a new session with summary
+        }
+      } else {
+        info('ACP: Agent does not support session loading or no saved session ID. Creating new session with summary.');
+      }
+
+      // Create a new session with a summary of previous progress
+      const summary = this.buildResumptionSummary(session);
+      const sessionId = await this.acpClient.createSession({
+        cwd: projectDir,
+        mcpServers: mcpServers.length > 0 ? mcpServers : undefined,
+        additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
+      });
+
+      // Send the summary as the first prompt so the agent has context
+      info('ACP: Sending resumption summary to new session');
+      this.acpLogStream?.write(`\n--- New Session (resumed from previous run) ---\n`);
+      this.acpLogStream?.write(`Previous session summary:\n${summary}\n\n`);
+
+      await this.acpClient.sendPrompt(sessionId, summary);
       return;
     }
 
-    const story = status.nextStory;
+    // Normal (non-resume) path: create session with filesystem scope
+    await this.acpClient.createSession({
+      cwd: projectDir,
+      mcpServers: mcpServers.length > 0 ? mcpServers : undefined,
+      additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
+    });
+  }
+
+  /**
+   * Build a summary of previous session progress for session resumption.
+   * This summary is sent as the first prompt to a new ACP session so the
+   * agent understands what was already accomplished.
+   */
+  private buildResumptionSummary(session: { completedStoryIds: string[]; currentIteration: number; lastStoryId: string | null }): string {
+    const prd = this.prdManager.getPRD();
+    const lines: string[] = [
+      'This is a continuation of a previous session that was interrupted. Here is a summary of progress so far:',
+      '',
+      `Project: ${prd.project}`,
+      `Branch: ${prd.branchName}`,
+      `Previous iteration: ${session.currentIteration}`,
+    ];
+
+    if (session.completedStoryIds.length > 0) {
+      lines.push('');
+      lines.push(`Completed stories (${session.completedStoryIds.length}):`);
+      for (const id of session.completedStoryIds) {
+        const story = prd.userStories.find(s => s.id === id);
+        if (story) {
+          lines.push(`  - ${story.id}: ${story.title}`);
+        }
+      }
+    }
+
+    if (session.lastStoryId) {
+      const lastStory = prd.userStories.find(s => s.id === session.lastStoryId);
+      if (lastStory) {
+        lines.push('');
+        lines.push(`Last story being worked on: ${lastStory.id} "${lastStory.title}"`);
+      }
+    }
+
+    const pendingStories = prd.userStories
+      .filter(s => !s.passes)
+      .sort((a, b) => a.priority - b.priority);
+
+    if (pendingStories.length > 0) {
+      lines.push('');
+      lines.push(`Remaining stories (${pendingStories.length}):`);
+      for (const story of pendingStories) {
+        lines.push(`  - ${story.id} (priority ${story.priority}): ${story.title}`);
+      }
+    }
+
+    lines.push('');
+    lines.push('Please continue implementing the next highest-priority incomplete story.');
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Handle ACP events by writing human-readable output to .agent-output.log.
+   * Text deltas and tool call summaries are written in real time so the
+   * monitor TUI (tail -f) can display them.
+   */
+  private handleACPEvent(event: ACPEvent): void {
+    if (!this.acpLogStream) return;
+
+    switch (event.type) {
+      case 'text_delta':
+        this.acpLogStream.write(event.text);
+        break;
+
+      case 'tool_call':
+        this.acpLogStream.write(`\n  Tool: ${event.toolCall.title} (${event.toolCall.toolCallId}) status=${event.toolCall.status}\n`);
+        if (event.toolCall.locations?.length) {
+          for (const loc of event.toolCall.locations) {
+            this.acpLogStream.write(`    Location: ${loc.path}${loc.line ? `:${loc.line}` : ''}\n`);
+          }
+        }
+        if (event.toolCall.diffs.length > 0) {
+          for (const diff of event.toolCall.diffs) {
+            this.acpLogStream.write(`    Diff: ${diff.path}\n`);
+          }
+        }
+        break;
+
+      case 'tool_call_update':
+        if (event.toolCall.status === 'completed' || event.toolCall.status === 'failed') {
+          this.acpLogStream.write(`  Tool ${event.toolCall.title}: ${event.toolCall.status}\n`);
+        }
+        break;
+
+      case 'error':
+        this.acpLogStream.write(`\nERROR: ${event.message} (code: ${event.code})\n`);
+        break;
+
+      default:
+        // Other events (usage, plan, state_change, etc.) are handled by the logger
+        break;
+    }
+  }
+
+  /**
+   * Register a SIGINT handler for graceful shutdown.
+   * Saves ACP session ID and session state to .session.json before exiting.
+   */
+  private registerSigintHandler(): void {
+    this.sigintHandler = async () => {
+      info('\nInterrupted — saving session state for resumption...');
+
+      // Save ACP session ID for resumption
+      const acpSessionId = this.acpClient?.getSessionId() ?? undefined;
+      await this.sessionManager.update({
+        currentIteration: this.iterationCount,
+        completedStoryIds: [...this.sessionCompletedIds],
+        lastStoryId: this.getTargetStory()?.id ?? null,
+        acpSessionId,
+        isResumed: false,
+      });
+
+      // Write to progress log
+      const storyInfo = this.getTargetStory();
+      await this.logProgress(
+        `INTERRUPTED at iteration ${this.iterationCount}. ` +
+        `Session saved for resumption. ` +
+        `${this.sessionCompletedIds.length} stories completed. ` +
+        `ACP session: ${acpSessionId ?? 'n/a'}. ` +
+        (storyInfo ? `Next story: ${storyInfo.id} "${storyInfo.title}"` : 'No next story')
+      );
+
+      // Clean up ACP client
+      await this.cleanupACP();
+
+      process.exit(130); // 128 + SIGINT(2)
+    };
+
+    process.on('SIGINT', this.sigintHandler);
+  }
+
+  /**
+   * Unregister the SIGINT handler.
+   */
+  private unregisterSigintHandler(): void {
+    if (this.sigintHandler) {
+      process.removeListener('SIGINT', this.sigintHandler);
+      this.sigintHandler = null;
+    }
+  }
+
+  /**
+   * Clean up ACP client resources: close log stream and agent subprocess.
+   * Also unregisters the SIGINT handler.
+   */
+  private async cleanupACP(): Promise<void> {
+    this.unregisterSigintHandler();
+
+    if (this.acpLogStream) {
+      // Write final summary
+      if (this.acpTotalCost > 0) {
+        this.acpLogStream.write(`\nTotal cost: $${this.acpTotalCost.toFixed(4)}\n`);
+      }
+      if (this.acpTotalDuration > 0) {
+        this.acpLogStream.write(`Total duration: ${formatDuration(this.acpTotalDuration)}\n`);
+      }
+      this.acpLogStream.end();
+      this.acpLogStream = null;
+    }
+
+    if (this.acpClient) {
+      await this.acpClient.close();
+      this.acpClient = null;
+    }
+  }
+
+  /**
+   * Run a single dry-run iteration (simulates completion without spawning tools)
+   */
+  private async runDryIteration(i: number): Promise<void> {
+    const story = this.getTargetStory();
+
     if (!story) {
-      warn(`[DRY-RUN] Iteration ${i}: No eligible story — all remaining stories have unmet dependencies.`);
+      const reason = this.config.storyIds ? 'All targeted stories are complete' : 'No eligible story — all remaining stories have unmet dependencies';
+      info(`[DRY-RUN] Iteration ${i}: ${reason}.`);
       return;
     }
 
@@ -336,6 +772,8 @@ export class AgentIterator {
    * Handle completion
    */
   private async handleComplete(): Promise<void> {
+    await this.cleanupACP();
+
     const finalStatus = this.prdManager.getStatus();
     const totalDuration = formatDuration(Date.now() - this.sessionStartTime);
     success('All tasks completed!');
@@ -499,9 +937,18 @@ export class AgentIterator {
   }
 
   /**
-   * Check if tool is available
+   * Check if tool is available (legacy tool-runner or ACP provider)
    */
   async isToolAvailable(): Promise<boolean> {
+    if (this.useACP) {
+      const registry = await getACPRegistry();
+      try {
+        await registry.resolve(this.config.tool);
+        return true;
+      } catch {
+        return false;
+      }
+    }
     return this.toolRunner.isAvailable();
   }
 }

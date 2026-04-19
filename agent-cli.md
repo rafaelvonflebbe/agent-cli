@@ -30,7 +30,7 @@ You are an autonomous development agent. Your job is to implement user stories f
 
 ## Architecture
 
-Agent CLI is an autonomous loop that drives an AI tool (claude, openclaude, or any registered tool) to iteratively implement user stories defined in a PRD.
+Agent CLI is an autonomous loop that drives an AI tool to iteratively implement user stories defined in a PRD. It supports two execution modes: **legacy** (spawn + stdout scanning for `claude`/`openclaude`) and **ACP** (Agent Client Protocol for structured JSON-RPC 2.0 communication with any ACP-compatible agent).
 
 **Entry point:** `src/index.ts` — CLI powered by `commander`. Parses `[max_iterations]`, `--tool`, `--directory`, `--dry-run`, `--init`, `--stories` flags. Validates that `prd.json` exists, then calls `runAgent()`. Also provides a `status` subcommand.
 
@@ -39,17 +39,23 @@ Agent CLI is an autonomous loop that drives an AI tool (claude, openclaude, or a
 2. Initialize archive system (creates `progress.log` if missing)
 3. Check if branch still exists — if stale, archive run, clear branchName, and stop
 4. Check if branch changed — if so, archive previous run
-5. Iterate up to `maxIterations`: spawn the AI tool, stream its prompt file to stdin, capture stdout to detect `<promise>COMPLETE</promise>` signal
-6. After each iteration: reload PRD, log progress to `progress.log`, detect file changes, check for story completions
-7. Respect `--stories` limit if set — stop after N stories completed in this run
+5. Determine execution path: ACP (if `--tool` maps to an ACP provider) or legacy (spawn + stdout)
+6. Iterate up to `maxIterations`:
+   - **ACP path:** create/reuse ACP session, send prompt as ContentBlock, collect structured SessionUpdates, detect completion from protocol
+   - **Legacy path:** spawn the AI tool, stream its prompt file to stdin, capture stdout to detect `<promise>COMPLETE</promise>` signal
+7. After each iteration: reload PRD, log progress to `progress.log`, detect file changes, check for story completions
+8. Respect `--stories` limit if set — stop after N stories completed in this run
 
 **Key modules:**
-- `src/core/tool-runner.ts` — Spawns registered AI tools as child processes. Pipes the prompt file to stdin. Detects completion by scanning stdout for the signal string. In `--dry-run` mode, this module is bypassed entirely.
+- `src/core/tool-runner.ts` — Spawns registered AI tools as child processes (legacy path). Pipes the prompt file to stdin. Detects completion by scanning stdout for the signal string. In `--dry-run` mode, this module is bypassed entirely.
+- `src/core/acp-client.ts` — ACP client wrapping `@agentclientprotocol/sdk`. Manages full session lifecycle: launch agent subprocess, protocol handshake, create session, send prompts, receive structured SessionUpdates. Includes filesystem boundary validation and typed event bus.
+- `src/core/acp-registry.ts` — Multi-agent provider registry. Built-in providers: Claude, Codex, Copilot, Gemini. Custom providers via `~/.agent-cli/providers.json`. Maps `--tool` flag to ACP adapter commands.
+- `src/core/mcp-config.ts` — MCP server configuration loading and resolution. Three config levels: provider defaults, PRD `mcpServers`, project-level `.agent-cli/mcp-servers.json`.
 - `src/core/prd.ts` — `PRDManager` class: load/save/validate `prd.json` against JSON schema, track story completion, find next incomplete story by priority (lower number = higher priority). Schema validation uses Ajv with `prd.schema.json`.
 - `src/core/archiver.ts` — When `branchName` in PRD changes, archives previous `prd.json` + `progress.log` to `archive/YYYY-MM-DD-feature-name/`. Tracks last branch in `.last-branch`. Creates and resets `progress.log` with headers including branch name and timestamp.
-- `src/core/config.ts` — Tool registry, defaults (tool: `claude`, maxIterations: `10`, delay: `2000ms`), validation, and tool command/args mapping. Tools are registered in a `TOOL_REGISTRY` map — add new tools by adding entries.
+- `src/core/config.ts` — Tool registry, ACP provider awareness, defaults (tool: `claude`, maxIterations: `10`, delay: `2000ms`), validation, and tool command/args mapping.
 - `src/core/init.ts` — `--init` command: copies `agent-cli.md`, creates `progress.log` header, and optionally creates a template `prd.json` in the target directory. Skips `prd.json` if it already exists.
-- `src/core/types.ts` — All TypeScript interfaces: `PRD`, `UserStory`, `AgentConfig`, `ToolResult`, `ArchiveInfo`, `PRDStatus`, etc.
+- `src/core/types.ts` — All TypeScript interfaces: `PRD`, `UserStory`, `AgentConfig`, `ToolResult`, `ArchiveInfo`, `PRDStatus`, `McpServerConfig`, `ACPProvider`, `ACPProviderCapabilities`, `ProvidersConfig`, etc.
 - `src/utils/git-utils.ts` — Git utilities: `captureGitStatus()` captures `git status --porcelain`, `diffGitStatus()` compares two snapshots to detect added/modified/removed files, `branchExists()` checks if a branch exists locally, `displayFileChanges()` renders changes with chalk colors.
 - `src/utils/file-utils.ts` — JSON/text file I/O helpers.
 - `src/utils/logger.ts` — chalk-based colored logging with levels and iteration headers showing the target story.
@@ -64,7 +70,7 @@ agent-cli [max_iterations] [options]
 ```
 
 **Options:**
-- `--tool <tool>` — AI tool to use (default: `claude`). Available tools: `claude`, `openclaude`. Add new tools via the tool registry in `src/core/config.ts`.
+- `--tool <tool>` — AI tool to use (default: `claude`). Available tools: `claude`, `openclaude` (legacy), `codex`, `copilot`, `gemini` (ACP). Add custom ACP providers via `~/.agent-cli/providers.json`.
 - `--directory <path>` — Working directory containing `prd.json` (default: cwd)
 - `--dry-run` — Simulate iterations without spawning tools. Logs which story would be picked, which tool would run, and simulates completing one story per iteration.
 - `--init` — Bootstrap agent-cli files (`agent-cli.md`, `progress.log`, template `prd.json`) in the target directory and exit. Does not start the agent loop. Skips `prd.json` if it already exists.

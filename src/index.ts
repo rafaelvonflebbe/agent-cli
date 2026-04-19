@@ -49,7 +49,9 @@ program
   .option('--resume', 'Resume from a previous interrupted session')
   .option('--sandbox', 'Run AI tool inside a Docker container for isolation')
   .option('--permission-mode <mode>', 'Permission mode: scoped (default, allowlisted tools only) or yolo (skip all permissions, full access)', 'scoped')
-  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; projectDirectory?: string; stories?: string; resume?: boolean; sandbox?: boolean; permissionMode: string }) => {
+  .option('--acp', 'Force ACP (Agent Client Protocol) mode instead of legacy spawn')
+  .option('--story <ids>', 'Run specific story IDs (comma-separated, e.g., US-068,US-070)')
+  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; projectDirectory?: string; stories?: string; resume?: boolean; sandbox?: boolean; permissionMode: string; acp?: boolean; story?: string }) => {
     try {
       // Handle --init mode
       if (options.init) {
@@ -101,6 +103,16 @@ program
       }
       const permissionMode: PermissionMode = options.permissionMode;
 
+      // Parse --story flag (comma-separated IDs)
+      let storyIds: string[] | undefined;
+      if (options.story) {
+        storyIds = options.story.split(',').map(s => s.trim()).filter(Boolean);
+        if (storyIds.length === 0) {
+          error('--story must contain at least one story ID');
+          process.exit(1);
+        }
+      }
+
       const config = createConfig({
         tool: options.tool,
         directory: options.directory,
@@ -111,6 +123,8 @@ program
         resume: options.resume,
         sandbox: options.sandbox ? { image: 'agent-cli-runner' } satisfies SandboxConfig : undefined,
         permissionMode,
+        acp: options.acp,
+        storyIds,
       });
 
       // Check for existing session

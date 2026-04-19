@@ -70,11 +70,17 @@ export async function collectProjectStatus(directory: string): Promise<ProjectSt
       const session = await sessionManager.load();
       const iterStr = `${session.currentIteration}`;
       const sessionAge = Date.now() - new Date(session.timestamp).getTime();
-      status = sessionAge < STALE_THRESHOLD_MS ? 'running' : 'idle';
+      const isResumed = session.isResumed === true || !!session.acpSessionId;
+
+      if (isResumed && sessionAge < STALE_THRESHOLD_MS) {
+        status = 'resumed';
+      } else {
+        status = sessionAge < STALE_THRESHOLD_MS ? 'running' : 'idle';
+      }
       cost = 0;
       lastActivity = relativeTime(session.timestamp);
 
-      return { directory, project, branch, iteration: iterStr, stories, status, cost, lastActivity };
+      return { directory, project, branch, iteration: iterStr, stories, status, cost, lastActivity, isResumed };
     }
 
     const prdStatus = manager.getStatus();

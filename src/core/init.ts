@@ -2,11 +2,11 @@
  * Init command — bootstraps agent-cli scaffold files in a target directory
  */
 
-import { join, dirname, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { join, resolve } from 'path';
 import { fileExists, writeText, copyFileTo, ensureDir } from '../utils/file-utils.js';
 import { info, success, warn } from '../utils/logger.js';
 import { getCurrentBranch } from '../utils/git-utils.js';
+import { ensureGlobalAgentCliMd } from './prompt-resolver.js';
 
 /** Template PRD with placeholder values */
 const TEMPLATE_PRD = {
@@ -37,14 +37,12 @@ export async function runInit(targetDir: string, projectDirectory?: string): Pro
 
   await ensureDir(targetDir);
 
-  // Resolve the package root (where agent-cli.md lives)
-  const __filename = fileURLToPath(import.meta.url);
-  const packageRoot = join(dirname(__filename), '../..');
-  const sourceAgentCliMd = join(packageRoot, 'agent-cli.md');
+  // Ensure the global ~/.agent-cli/agent-cli.md template exists (auto-created if missing)
+  const globalAgentCliMd = await ensureGlobalAgentCliMd();
 
-  // Copy agent-cli.md
+  // Copy agent-cli.md from global template to project directory
   const destAgentCliMd = join(targetDir, 'agent-cli.md');
-  await copyFileTo(sourceAgentCliMd, destAgentCliMd);
+  await copyFileTo(globalAgentCliMd, destAgentCliMd);
   success('  Created agent-cli.md');
 
   // Create progress.log with standard header

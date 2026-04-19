@@ -1,249 +1,237 @@
 {
   "project": "agent-cli",
-  "branchName": "feat/tmux",
+  "branchName": "feat/acp",
   "description": "A test project for agent-cli",
   "userStories": [
     {
-      "id": "US-037",
-      "title": "Notificar no Telegram ao completar user stories",
-      "description": "Adicionar sistema de notificação no agent-cli que envia mensagens ao Telegram quando uma user story é completada. Após cada iteração, o agent-cli detecta stories que mudaram de passes:false para passes:true e envia uma notificação com título da story e resumo das mudanças. A notificação é feita via HTTP direto à API do Telegram (sem depender de iara-bot). Configuração via variáveis de ambiente TELEGRAM_TOKEN e TELEGRAM_CHAT_ID.",
+      "id": "US-060",
+      "title": "Install @agentclientprotocol/sdk and create ACP client module",
+      "description": "Add the ACP TypeScript SDK as a dependency and create a new src/core/acp-client.ts module that wraps the ClientSideConnection class. This module handles the ACP lifecycle: launch agent subprocess, initialize protocol handshake, create session, send prompts, and receive structured updates. Reference: https://agentclientprotocol.com/libraries/typescript",
       "acceptanceCriteria": [
-        "Após cada iteração, detectar stories recém-completadas (passes mudou de false para true)",
-        "Enviar mensagem ao Telegram via POST em https://api.telegram.org/bot<token>/sendMessage com TELEGRAM_TOKEN e TELEGRAM_CHAT_ID do .env",
-        "Mensagem inclui: título da story, ID, e resumo dos arquivos alterados (do git status que já é capturado)",
-        "Notificação é opcional — se TELEGRAM_TOKEN ou TELEGRAM_CHAT_ID não estiverem definidos, silenciosamente ignora",
-        "Usar fetch nativo (Node 18+) sem novas dependências",
-        "Logar sucesso/falha da notificação no progress.log",
-        "npm run build passa"
+        "npm install @agentclientprotocol/sdk succeeds",
+        "New src/core/acp-client.ts with ACPClient class",
+        "ACPClient.launch() starts an agent subprocess and performs ACP handshake (Initialize + NewSession)",
+        "ACPClient.sendPrompt(sessionId, prompt) sends a prompt and returns structured SessionUpdate events",
+        "ACPClient.close() gracefully shuts down the session and process",
+        "Module is exportable but NOT wired into the main loop yet (standalone module)",
+        "npm run build passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "ACP SDK provides ClientSideConnection for the client side (agent-cli) and AgentSideConnection for agents. We need ClientSideConnection. The SDK handles JSON-RPC 2.0 over stdio transport. Reference: Compozy uses github.com/coder/acp-go-sdk v0.6.3 in Go — we use the TypeScript equivalent."
+    },
+    {
+      "id": "US-061",
+      "title": "Implement ACP session lifecycle with structured update handling",
+      "description": "Build the full session lifecycle on top of the ACP client: create session with working directory, send prompt as ContentBlock, subscribe to SessionUpdate notifications, parse structured content (text blocks, tool calls with start/update/completed/failed states, diffs, terminal output), detect session completion and idle states, handle errors with structured context.",
+      "acceptanceCriteria": [
+        "Session creation accepts cwd and optional MCP servers config",
+        "Prompts sent as acp.TextBlock content blocks",
+        "SessionUpdate handler parses all content types: text, tool_use (start/update/completed/failed), diff, terminal_output",
+        "Tool call events include tool_call_id, tool name, and structured input/output",
+        "Diff events include old_text, new_text, and file path",
+        "Idle detection: session state transitions (working -> idle -> waiting_for_tool) are tracked",
+        "Session completion is detected from protocol (not string scanning)",
+        "Error handling uses structured ACP error codes, not process exit codes",
+        "All events emitted to the event bus (US-046 dependency) for journaling and UI",
+        "npm run build passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "This replaces the current stream-json parsing in tool-runner.ts. ACP provides native structured updates instead of us parsing Claude-specific stream-json format. Compozy reference: internal/core/agent/client.go lines 400-600 (sessionUpdate handler with content block parsing).",
+      "dependsOn": [
+        "US-060"
+      ]
+    },
+    {
+      "id": "US-062",
+      "title": "Multi-agent support via ACP provider registry",
+      "description": "Replace the current hardcoded tool registry (claude, openclaude) with an ACP provider registry. Each provider specifies: agent name, ACP adapter command (e.g. npx @agentclientprotocol/claude-agent-acp for Claude, npx @zed-industries/codex-acp for Codex), supported capabilities, and default MCP servers. Users can add new agents without code changes via config.",
+      "acceptanceCriteria": [
+        "New src/core/acp-registry.ts with ACPProviderRegistry",
+        "Built-in providers: Claude (@agentclientprotocol/claude-agent-acp), Codex (@zed-industries/codex-acp), Copilot (@github/copilot --acp), Gemini (@google/gemini-cli --acp)",
+        "Each provider has: name, command, args, capabilities (fs, terminal), default env vars",
+        "Configurable via .agent-cli/providers.json or similar — users can add custom providers",
+        "CLI --tool flag maps to provider name (e.g. --tool codex)",
+        "Provider availability check (is the adapter installed?)",
+        "Fallback: if ACP adapter not found, suggest install command",
+        "npm run build passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Reference: Compozy internal/core/agent/registry_specs.go has agent specs with Commands, Fallbacks, and EnvVars. ACP adapters are npm packages like @agentclientprotocol/claude-agent-acp. This makes agent-cli agent-agnostic."
+    },
+    {
+      "id": "US-063",
+      "title": "MCP server integration per ACP session",
+      "description": "ACP natively supports attaching MCP servers to sessions. Implement MCP server configuration per provider/project that gets passed during session creation. This allows agents to use additional tools (databases, APIs, filesystem extensions) beyond their built-in capabilities.",
+      "acceptanceCriteria": [
+        "Session creation accepts mcpServers config matching ACP's MCP server format",
+        "MCP servers configurable per project (in prd.json or separate config)",
+        "MCP servers passed to NewSession request via the ACP SDK",
+        "Agent can use MCP tools during execution — tool calls appear in structured updates",
+        "Support at least: filesystem MCP server, custom tool MCP servers",
+        "npm run build passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Reference: Compozy passes MCP servers in NewSessionRequest. This is a major advantage over the current approach — agents get extensible tools without modifying agent-cli. MCP server format: { command: string, args: string[], env?: Record<string, string> }.",
+      "dependsOn": [
+        "US-060"
+      ]
+    },
+    {
+      "id": "US-064",
+      "title": "Wire ACP client into the main iterator loop",
+      "description": "Replace the current tool-runner.ts spawn+stdout approach with the ACP client for structured communication. The iterator creates an ACP session per iteration, sends the prompt as a structured ContentBlock, receives SessionUpdates, and detects completion from the protocol (no more <promise>COMPLETE</promise> string scanning). Keep tool-runner.ts as a legacy fallback for non-ACP tools.",
+      "acceptanceCriteria": [
+        "Iterator detects if a tool has ACP support (via registry) and uses ACP client instead of tool-runner",
+        "ACP path: create session -> send prompt -> stream updates -> detect completion from protocol",
+        "Legacy path: existing tool-runner spawn+stdout (unchanged, for tools without ACP)",
+        "Story completion detection: instead of scanning stdout for <promise>COMPLETE</promise>, detect from ACP session result or agent's tool call that updates prd.json",
+        "Cost and duration extracted from ACP session metadata",
+        "Human-readable log still written to .agent-output.log",
+        "Monitor TUI shows ACP session updates (tool calls, diffs) in real time",
+        "Backward compatible: existing prd.json and workflows continue to work",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "This is the main integration story. The iterator should prefer ACP when available, fall back to legacy spawn+stdout when not. Compozy reference: internal/core/run/executor/runner.go uses ACP client per job execution. The <promise>COMPLETE</promise> signal can be replaced by checking if the agent's final tool call updated prd.json passes field.",
+      "dependsOn": [
+        "US-060",
+        "US-061",
+        "US-062"
+      ]
+    },
+    {
+      "id": "US-065",
+      "title": "ACP session resumption for interrupted runs",
+      "description": "ACP supports loading existing sessions (LoadSession). Use this to implement proper session resumption instead of the current --resume which just tracks completed story IDs. When an iteration is interrupted, save the ACP session ID. On resume, load the session and continue from where the agent left off — no lost context, no repeated work.",
+      "acceptanceCriteria": [
+        "On interruption (SIGINT, crash), save ACP session ID to .session.json",
+        "--resume flag loads the ACP session via LoadSession instead of starting a new one",
+        "Agent continues with full context from previous run (no prompt replay)",
+        "Session timeout handling: if session is expired, start a new one with a summary of what happened",
+        "Monitor detects resumed sessions and shows continuation in the UI",
+        "npm run build passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Major improvement over current resume which just skips completed stories. ACP session resumption preserves the full agent context (conversation, tool state, working memory). Compozy reference: internal/core/agent/client.go LoadSession support.",
+      "dependsOn": [
+        "US-061",
+        "US-064"
+      ]
+    },
+    {
+      "id": "US-066",
+      "title": "Structured file system boundaries via ACP",
+      "description": "ACP provides built-in file system capabilities with path validation. Use ACP's ReadTextFile/WriteTextFile operations instead of granting agents unrestricted filesystem access. Configure allowedRoots per session (project directory + optional add-dirs). All file operations are validated against allowed roots, preventing agents from accessing files outside their sandbox.",
+      "acceptanceCriteria": [
+        "ACP session initialized with Fs capability (ReadTextFile, WriteTextFile)",
+        "allowedRoots set to project directory (+ projectDirectory if different)",
+        "Agent file operations are validated by ACP protocol — blocked if outside allowed roots",
+        "Path resolution: all paths resolved relative to session working directory",
+        "Replaces Docker sandbox for filesystem isolation (ACP does it at protocol level)",
+        "Optional: addDirs config for multi-directory projects",
+        "npm run build passes"
       ],
       "priority": 4,
       "passes": true,
-      "notes": "Originado do TODO id 27 da iara-bot: 'opção de ao finalizar uma tarefa de desenvolvimento mandar para grupo do telegram com o bot. Pode ser uma skill q chama o bot.' Decidiu-se implementar no agent-cli pois ele já tem o contexto de quando tasks terminam. Não precisa alterar a iara-bot. Para notificação privada, TELEGRAM_CHAT_ID usa o mesmo valor de ALLOWED_USER_ID do iara-bot."
+      "notes": "Reference: Compozy internal/core/agent/client.go lines 863-958 (sandbox path resolution and validation). This is a security feature — agents can only touch files in the project directory without needing Docker.",
+      "dependsOn": [
+        "US-060"
+      ]
     },
     {
-      "id": "US-035",
-      "title": "Write human-readable agent logs for monitor and tmux tail",
-      "description": "The .agent-output.log file currently contains raw stream-json events because tool-runner writes raw chunks to the log file. Fix: tool-runner must write PARSED, human-readable output to .agent-output.log — reuse the same format that createStreamEventHandler() already produces for process.stdout (tool names with args, text output, iteration markers). This log file is the data source for both the monitor TUI and the tmux integration (US-036).",
+      "id": "US-067",
+      "title": "Global agent-cli.md with per-project override support",
+      "description": "Move the default agent-cli.md prompt template to ~/.agent-cli/agent-cli.md as a global default, eliminating the need to copy and maintain the file in every project directory. Projects can still override by having their own agent-cli.md in the working directory. The iterator and init module should check project-level first, then fall back to the global template.",
       "acceptanceCriteria": [
-        "tool-runner writes human-readable output to .agent-output.log (not raw stream-json). Reuse the parsing from createStreamEventHandler() — same format shown on stdout: 'Using: Read /path/to/file', text content, iteration headers, cost/duration summaries",
-        "Write to log file in real-time as events are parsed (streaming, not buffered until end)",
-        ".agent-output.log is added to .gitignore",
-        "No new dependencies required",
-        "npm run build passes"
-      ],
-      "priority": 3,
-      "passes": true,
-      "notes": "Root cause: line 291 in tool-runner.ts does logStream.write(chunk) with raw stream-json data. The fix is to write the parsed/formatted output to the log instead — createStreamEventHandler() already produces human-readable output via process.stdout.write() and chalk formatting. The simplest approach: make handleStreamEvent return the formatted strings and write those to the log file. For non-stream-json tools (amp), the raw output is already human-readable so no change needed."
-    },
-    {
-      "id": "US-038",
-      "title": "Carregar .env do diretório de instalação do agent-cli",
-      "description": "Atualmente o dotenv carrega o .env do diretório de trabalho (cwd), o que exige que cada projeto tenha TELEGRAM_TOKEN e TELEGRAM_CHAT_ID no seu próprio .env. O correto é carregar o .env do diretório de instalação do agent-cli, para configurar uma vez só e funcionar em qualquer projeto.",
-      "acceptanceCriteria": [
-        "dotenv carrega o .env do diretório de instalação do agent-cli, não do cwd",
-        "Funciona com npm link (carrega do diretório onde o agent-cli está instalado, não do projeto alvo)",
-        "Projetos alvo não precisam ter .env com TELEGRAM_TOKEN ou TELEGRAM_CHAT_ID",
-        "Após implementar, rodar bun run build para verificar que compila",
-        "Após build, rodar um teste manual enviando uma mensagem de teste ao Telegram para confirmar que o .env está sendo carregado corretamente e a notificação funciona",
-        "npm run build passa"
-      ],
-      "priority": 3,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-039",
-      "title": "Formatar duração em minutos/horas ao invés de segundos brutos",
-      "description": "Atualmente a duração da sessão é mostrada em segundos brutos (ex: Duration: 186.2s). Formatar para exibição legível: menos de 60s mostra em segundos, entre 60s e 1h mostra em minutos (ex: 3m 6s), acima de 1h mostra em horas (ex: 1h 2m 30s).",
-      "acceptanceCriteria": [
-        "Criar função utilitária de formatação de duração (ms → string legível)",
-        "Menos de 60s: exibir em segundos (ex: 45.2s)",
-        "60s a 1h: exibir em minutos e segundos (ex: 3m 6s)",
-        "Acima de 1h: exibir em horas, minutos e segundos (ex: 1h 2m 30s)",
-        "Atualizar tool-runner.ts para usar o novo formato no log e no stdout",
-        "npm run build passa"
-      ],
-      "priority": 3,
-      "passes": true,
-      "notes": "Os locais a atualizar estão em src/core/tool-runner.ts linhas 336 e 349, onde está Duration: ${(durationMs / 1000).toFixed(1)}s"
-    },
-    {
-      "id": "US-036",
-      "title": "Add tmux split-pane log viewer to monitor TUI",
-      "description": "Integrate tmux into the monitor TUI so that pressing 'l' on a selected project opens a tmux split pane running `tail -f .agent-output.log` for that project. This allows viewing real-time agent output for multiple projects simultaneously — each in its own tmux pane. The monitor table stays in the main pane. tmux is optional: if not installed, the monitor shows a message suggesting tmux installation and falls back to the Ink-based logs view (last N lines refreshed every 2s).",
-      "acceptanceCriteria": [
-        "Detect if running inside tmux (check TERM and TMUX env vars) and if tmux binary is available",
-        "Press 'l' on a selected project: if tmux available, open a split pane with `tail -f <project>/.agent-output.log`",
-        "Support multiple split panes — pressing 'l' on another project opens another split",
-        "Press 'L' (shift+l) to close all log panes and return to single-pane monitor",
-        "Each log pane has a header/border showing the project name",
-        "If tmux not available, fall back to Ink-based inline log view (tail last 50 lines, refresh every 2s)",
-        "Monitor must be started inside a tmux session for split-pane to work — detect and warn if not",
-        "Graceful cleanup: closing the monitor closes all spawned tail processes",
-        "No new dependencies required — tmux is a system tool",
-        "npm run build passes"
-      ],
-      "priority": 3,
-      "passes": true,
-      "notes": "Depends on US-035 (human-readable log file). Approach: monitor detects tmux availability at startup. When 'l' is pressed, runs `tmux split-pane -h 'tail -f <path>/.agent-output.log'` via child_process.execSync. The monitor itself must run inside tmux for split-pane to work. If not inside tmux, show warning and fall back to Ink inline view. tmux is NOT a hard dependency — monitor works without it, just without live split panes."
-    },
-    {
-      "id": "US-040",
-      "title": "Investigar no git quando projectDirectory foi removido e restaurar comportamento original",
-      "description": "O agent-cli já teve suporte a separar o diretório de configs (prd.json, logs) do diretório de trabalho do AI tool (cwd). Em algum momento essa funcionalidade foi removida. Investigar via git log/blame quando e por que isso aconteceu, e restaurar o comportamento original completo incluindo init, run, e qualquer integração que existia.",
-      "acceptanceCriteria": [
-        "Usar git log e git blame para encontrar o commit que removeu a separação directory/projectDirectory",
-        "Documentar o commit, data e motivo da remoção",
-        "Verificar se a implementação original tinha integrações adicionais que não foram restauradas (ex: prompt file, archiver, monitor, tmux)",
-        "Garantir que init com --directory e --project-directory funciona end-to-end: cria configs em .tmp, AI tool trabalha na raiz",
-        "npm run build passa"
-      ],
-      "priority": 1,
-      "passes": true,
-      "notes": "Investigação completa: projectDirectory NUNCA foi removido — nunca foi commitado. Existe apenas como staged changes (nunca committed) no branch feat/tmux. Nenhum commit no git history introduziu ou removeu essa feature. Os staged changes incluem: tipos (PRD, AgentConfig), flag CLI (--project-directory), init (runInit parameter), iterator (resolução do PRD), tool-runner (cwd do processo). Gaps corrigidos: git operations em iterator.ts agora usam projectDirectory quando setado; ensureSettingsJson() agora escreve em projectDirectory para o Claude Code encontrar; prd.schema.json já permite projectDirectory."
-    },
-    {
-      "id": "US-041",
-      "title": "Init usa branchName default 'main'",
-      "description": "O comando --init cria prd.json com branchName hardcoded como 'feature/your-feature'. Mudar para detectar a branch atual do git no diretório alvo. Se não conseguir detectar (não é repo git, erro), usar 'main' como default.",
-      "acceptanceCriteria": [
-        "runInit detecta a branch atual do git no targetDir (ou projectDirectory se fornecido)",
-        "Se detectar, usa a branch atual como branchName no prd.json template",
-        "Se não conseguir detectar, usa 'main' como fallback",
-        "npm run build passa"
-      ],
-      "priority": 2,
-      "passes": true,
-      "notes": "O usuário reportou que o init não está colocando o branch name correto. Hoje o template tem 'feature/your-feature' que nunca é o certo."
-    },
-    {
-      "id": "US-042",
-      "title": "Mostrar duração total acumulada de toda a sessão",
-      "description": "Hoje o agent-cli mostra duração apenas por iteração (Duration: 3m 6s). Não existe um acumulado total. Adicionar contagem de tempo total desde o início da sessão até o fim (seja conclusão de todas stories, max iterations, ou interrupção). Mostrar no log final e no progress.log.",
-      "acceptanceCriteria": [
-        "Registrar timestamp de início da sessão ao entrar no loop principal (run())",
-        "Ao final da sessão (todas stories completas, max iterations, ou erro), calcular duração total",
-        "Mostrar duração total acumulada no stdout: 'Total session time: 1h 2m 30s'",
-        "Escrever duração total no progress.log junto com o summary final",
-        "Usar a função formatDuration() existente para formatar",
-        "npm run build passa"
-      ],
-      "priority": 2,
-      "passes": true,
-      "notes": "O usuário suspeita que só mostra duração por story/iteração e quer ver o total. Locais relevantes: iterator.ts handleComplete() (sucesso), max iterations reached (linha ~248), e o catch de erro. Reutilizar formatDuration() de format-utils.ts."
-    },
-    {
-      "id": "US-043",
-      "title": "Auto-start tmux session when monitor launches",
-      "description": "When the monitor TUI starts, detect if tmux is installed but the process is not inside a tmux session. If so, automatically re-exec the monitor inside a new tmux session so split-pane log viewing works without manual setup. If a session named 'agent-cli' already exists, attach to it instead of creating a new one. If tmux is not installed, continue normally with inline fallback. The tmux session must close automatically when the monitor exits (user presses q).",
-      "acceptanceCriteria": [
-        "New ensureTmuxSession() function in src/core/tmux.ts",
-        "If TMUX env var is set, return true immediately (already inside tmux)",
-        "If tmux binary not found (which tmux fails), return false",
-        "If tmux installed but not in session: spawnSync tmux new-session -s agent-cli with current argv, then process.exit(0)",
-        "If session agent-cli already exists: attach instead (tmux attach-session -t agent-cli)",
-        "monitor.ts calls ensureTmuxSession() before entering alt screen buffer",
-        "When monitor exits, tmux session closes automatically (command exits)",
-        "npm run build passes"
-      ],
-      "priority": 1,
-      "passes": true,
-      "notes": "Replaces manual 'tmux new -s agent-cli && agent-cli monitor' workflow. spawnSync blocks until tmux exits, so original process never renders Ink — clean re-exec pattern."
-    },
-    {
-      "id": "US-044",
-      "title": "Remap monitor keybindings: Enter=log pane, Esc=close, s=detail",
-      "description": "The current keybindings use lowercase/uppercase 'l'/'L' for open/close which is confusing. Remap: Enter opens log pane (tmux split or inline), Esc closes panes and returns to table, 's' opens detail view (stories). Remove all 'l' and 'L' handlers. Update help text in footer to reflect new keys.",
-      "acceptanceCriteria": [
-        "Table view: Enter opens log pane (tmux split if available, inline fallback otherwise) — replaces old 'l' behavior",
-        "Table view: Esc closes all open log panes and stays in table view",
-        "Table view: 's' opens detail view with stories — replaces old Enter behavior",
-        "Detail view: 's' switches to stories subview (unchanged)",
-        "Detail view: 't' or Esc returns to table (unchanged)",
-        "Remove 'l' and 'L' handlers from all views",
-        "Update footer help text to show: Enter=open log, Esc=close, s=stories, t=table, q=quit",
-        "Update README.md and AGENTS.md keyboard controls table",
+        "Default agent-cli.md stored at ~/.agent-cli/agent-cli.md",
+        "~/.agent-cli/agent-cli.md is auto-created on first run if missing (from bundled template)",
+        "Iterator checks for project-level agent-cli.md first, falls back to global",
+        "--init copies from global template to project directory",
+        "Existing projects with agent-cli.md are unaffected (project-level takes precedence)",
+        "Single source of truth: update ~/.agent-cli/agent-cli.md to affect all projects without overrides",
         "npm run build passes"
       ],
       "priority": 2,
       "passes": true,
-      "notes": "Depends on US-043 for tmux auto-start. Key changes all in src/core/monitor-ui.tsx useInput handler (lines ~277-358).",
-      "dependsOn": ["US-043"]
+      "notes": "This solves the problem of having multiple copies of agent-cli.md that need to be updated independently. The global template is the default; per-project overrides are opt-in. Similar pattern to how providers.json works at ~/.agent-cli/providers.json."
     },
     {
-      "id": "US-045",
-      "title": "Add tmux status indicator to monitor footer",
-      "description": "Show a clear visual indicator in the monitor footer when running inside tmux with split panes open. Display count of open panes and which projects have active log tails. Helps verify the tmux integration is working during testing.",
+      "id": "US-068",
+      "title": "Add stopWhen to PRD for declarative loop termination conditions",
+      "description": "Add a `stopWhen` field to prd.json that lets users define custom conditions for when the agent loop should stop, beyond the existing all-stories-complete and max-iterations defaults. Support: stories (stop when specific story IDs complete), maxCostUsd (stop when accumulated cost exceeds threshold, ACP only), maxDurationMinutes (stop when session time exceeds limit). Conditions use OR logic — any condition being met triggers a stop. Also add a file deletion guard that detects and logs when the agent tries to delete files outside the project directory.",
       "acceptanceCriteria": [
-        "Footer shows 'tmux: active (N panes)' when inside tmux with N open split panes",
-        "Footer shows 'tmux: active (no panes)' when inside tmux but no panes open",
-        "Footer shows 'tmux: not installed' when tmux binary is not found",
-        "Footer shows 'tmux: auto-started' when monitor launched its own tmux session",
-        "Pane count updates in real time when panes are opened/closed",
+        "StopWhenCondition interface added to types.ts with stories, maxCostUsd, maxDurationMinutes fields",
+        "PRD interface extended with optional stopWhen field",
+        "prd.schema.json updated with stopWhen property definition",
+        "PRDManager.shouldStop() evaluates conditions with OR logic",
+        "Iterator checks stopWhen after each iteration (after stories check, before maxStories check)",
+        "File deletion guard: detect tool calls that delete files outside allowed roots, log warning to .agent-output.log and progress.log",
+        "isPathSafe() helper in file-utils.ts for path boundary checks",
+        "TEMPLATE_PRD in init.ts includes stopWhen example (empty/commented)",
+        "Backward compatible: missing stopWhen keeps current behavior",
         "npm run build passes"
       ],
-      "priority": 1,
-      "passes": true,
-      "notes": "Test story for the tmux monitor integration. Pure UI change in monitor-ui.tsx footer section."
+      "priority": 4,
+      "passes": false,
+      "notes": "Inspired by Vercel AI SDK's stopWhen callback. Since prd.json is static JSON, conditions are declarative (not callbacks). File deletion guard is safety-first: log but don't block initially, can add blocking later. Example stopWhen: { \"stories\": [\"US-001\"], \"maxCostUsd\": 5.0, \"maxDurationMinutes\": 30 }"
     },
     {
-      "id": "US-046",
-      "title": "Write test data to .agent-output.log for monitor testing",
-      "description": "Add a --test-log flag to the monitor command that generates fake agent output to .agent-output.log for each watched project. Writes timestamped entries simulating tool calls, text output, and iteration markers. This lets us test the tmux split pane and inline log view without running the full agent loop.",
+      "id": "US-069",
+      "title": "Research and adopt AI SDK loop control patterns",
+      "description": "Review the Vercel AI SDK's loop control primitives (maxSteps, stopWhen, onStepFinish, tool execution patterns) and evaluate which concepts can improve agent-cli's iteration loop. Focus on: conditional termination, step-level hooks, error recovery strategies, and structured progress reporting.",
       "acceptanceCriteria": [
-        "Monitor command accepts --test-log flag",
-        "When --test-log is set, write sample entries to .agent-output.log for each watched project before starting the TUI",
-        "Sample data includes: iteration headers, tool call lines (Using: Read, Using: Edit, Using: Bash), text output, cost/duration summaries",
-        "Continue normal monitor startup after writing test data",
-        "npm run build passes"
+        "Document which AI SDK patterns apply to agent-cli's architecture",
+        "Identify gaps where agent-cli can improve beyond current patterns",
+        "Evaluate onStepFinish for potential per-iteration hooks (e.g., onIterationFinish callback)",
+        "Compare error recovery: AI SDK retry patterns vs agent-cli's current approach",
+        "List actionable improvements as future stories"
       ],
-      "priority": 1,
-      "passes": true,
-      "notes": "Test story — lets us verify tmux split panes and inline log display work without needing to run a real agent iteration."
+      "priority": 5,
+      "passes": false,
+      "notes": "AI SDK reference: https://ai-sdk.dev/docs/agents/loop-control — maxSteps (equiv to maxIterations), stopWhen callback (equiv to our declarative stopWhen from US-068), onStepFinish hook. Look at how AI SDK handles tool results, multi-step reasoning, and structured output between steps."
     },
     {
-      "id": "US-047",
-      "title": "Fix tmux split-pane stealing focus from monitor",
-      "description": "When opening a tmux split pane with Enter, the focus moves to the new pane. This breaks navigation — arrow keys, Esc, and Enter go to the tail process instead of the monitor. Fix by adding -d flag to tmux split-pane so focus stays on the monitor pane. Also use -P -F to get the pane ID directly instead of a separate list-panes call.",
+      "id": "US-070",
+      "title": "Design and implement a session state reducer",
+      "description": "Create a reducer pattern to manage session state across iterations. Currently state is scattered: session file (.session.json), PRD manager, iterator fields (iterationCount, storiesCompletedThisRun, acpTotalCost, acpTotalDuration, sessionCompletedIds). A reducer centralizes state transitions (story completed, iteration finished, session interrupted, branch changed, stopWhen triggered) into a single predictable state machine with an immutable state object. This makes state persistence, resumption, and observability straightforward — dispatch an action, get next state, persist it.",
       "acceptanceCriteria": [
-        "tmux split-pane command uses -d flag to keep focus on the monitor pane",
-        "Use -P -F '#{pane_id}' to print new pane ID directly from split-pane (no separate list-panes call)",
-        "After opening a pane, arrow keys still navigate the monitor table",
-        "Esc closes panes correctly",
-        "No control character corruption in panes",
+        "Define SessionState interface with all current state fields (iteration, completed stories, cost, duration, branch, ACP session ID, stopWhen status)",
+        "Define action types: STORY_COMPLETED, ITERATION_FINISHED, SESSION_INTERRUPTED, BRANCH_CHANGED, STOPWHEN_TRIGGERED, SESSION_RESUMED",
+        "Reducer function: (state, action) => nextState — pure, no side effects",
+        "Replace scattered state mutations in iterator.ts with dispatch calls",
+        "State persisted to .session.json after every dispatch (single write point)",
+        "Monitor/observability modules read from reducer state instead of aggregating from multiple sources",
+        "Backward compatible: existing .session.json files load into initial state",
         "npm run build passes"
       ],
-      "priority": 1,
-      "passes": true,
-      "notes": "Root cause: tmux split-pane without -d moves focus to the new pane. All keystrokes then go to tail -f instead of Ink. Fix is simply adding -d flag. The -P -F improvement is cosmetic — cleaner than the previous two-step list-panes approach."
+      "priority": 5,
+      "passes": false,
+      "notes": "Inspired by Redux-like reducer pattern and AI SDK's internal state management. Current pain points: (1) session state updated in 4+ places in iterator.ts, (2) cost/duration tracked as instance fields separate from session file, (3) resumption reconstructs state from multiple sources. A reducer solves all three. Future: could enable undo/redo, time-travel debugging, and state snapshots for the monitor TUI."
     },
     {
-      "id": "US-048",
-      "title": "Add -p 35 to tmux split-pane so log pane uses 35% width",
-      "description": "The tmux split-pane currently uses default 50/50 split, which cramps the monitor table. Add -p 35 flag so the log pane takes 35% of the width and the monitor table gets 65%.",
+      "id": "US-071",
+      "title": "Add --story flag to target a specific story by ID",
+      "description": "Add a --story <id> CLI flag that lets users run agent-cli for a single specific story instead of always picking the next highest-priority story. When set, the iterator skips priority ordering and works only on the given story ID. Validates that the ID exists in prd.json and that dependencies are met. Works with both --dry-run and live modes.",
       "acceptanceCriteria": [
-        "tmux split-pane command includes -p 35 flag",
-        "Log pane takes ~35% of terminal width",
-        "Monitor table is clearly visible in the remaining 65%",
+        "CLI flag --story <id> added to main command (e.g., agent-cli --story US-068)",
+        "AgentConfig type extended with optional storyId field",
+        "Iterator validates story ID exists in prd.json — error if not found",
+        "Iterator validates dependencies are met for the target story — error if blocked",
+        "When --story is set, iterator runs only that story (ignores priority ordering)",
+        "Works with --stories 1 to run exactly one iteration for the targeted story",
+        "status command shows which story would be targeted",
+        "Backward compatible: omitting --story keeps current priority-based behavior",
         "npm run build passes"
       ],
-      "priority": 1,
+      "priority": 4,
       "passes": true,
-      "notes": "Quick fix — just adding -p 35 to the split-pane command in openLogPane(). This ensures both the table and log are visible simultaneously."
-    },
-    {
-      "id": "US-049",
-      "title": "Fix isInsideTmux() TERM check blocking tmux detection",
-      "description": "isInsideTmux() requires TERM to start with 'tmux', but many tmux configs set TERM=xterm-256color or TERM=screen-256color. This causes the function to return false even inside tmux, so openLogPane() bails immediately. Fix by only checking process.env.TMUX.",
-      "acceptanceCriteria": [
-        "isInsideTmux() only checks process.env.TMUX, not TERM",
-        "openLogPane() uses before/after pane ID diffing instead of -P -F flags",
-        "tmux split-pane keeps -d and -p 35 flags",
-        "npm run build passes"
-      ],
-      "priority": 1,
-      "passes": true,
-      "notes": "Two bugs: (1) TERM check too strict — TMUX env var alone is sufficient. (2) -P -F '#{pane_id}' unreliable with shell command arguments — replaced with before/after pane ID diffing."
+      "notes": "Currently getNextStory() always returns highest priority incomplete story with deps met. With --story, we bypass that and return the specific story. Supports multiple IDs comma-separated (e.g., --story US-068,US-070) to run specific stories in order. Useful for re-running a failed story, jumping ahead, or targeted testing."
     }
   ]
 }
