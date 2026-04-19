@@ -65,23 +65,24 @@ export class Archiver {
     // Create archive directory
     await ensureDir(archiveDir);
 
-    // Archive PRD if it exists
+    // Archive PRD if it exists — include branch name in filename
     const prdPath = join(this.directory, PRD_FILE);
     if (fileExistsSync(prdPath)) {
-      const prdArchivePath = join(archiveDir, PRD_FILE);
+      const prdArchiveName = `prd_${featureName}.json`;
+      const prdArchivePath = join(archiveDir, prdArchiveName);
       await copyFileTo(prdPath, prdArchivePath);
-      info(`  Archived: ${PRD_FILE}`);
+      info(`  Archived: ${prdArchiveName}`);
     }
 
-    // Archive progress file if it exists and has content
+    // Archive progress file if it exists and has content — include branch name in filename
     const progressPath = join(this.directory, PROGRESS_FILE);
     if (fileExistsSync(progressPath)) {
       const progressContent = await readText(progressPath);
-      // Only archive if there's actual progress (beyond just headers)
       if (this.hasProgressContent(progressContent)) {
-        const progressArchivePath = join(archiveDir, PROGRESS_FILE);
+        const progressArchiveName = `progress_${featureName}.log`;
+        const progressArchivePath = join(archiveDir, progressArchiveName);
         await copyFileTo(progressPath, progressArchivePath);
-        info(`  Archived: ${PROGRESS_FILE}`);
+        info(`  Archived: ${progressArchiveName}`);
       }
     }
 
@@ -96,9 +97,8 @@ export class Archiver {
    * Check if progress file has actual content (beyond headers)
    */
   private hasProgressContent(content: string): boolean {
-    // Check for progress entries (lines starting with ##)
-    const lines = content.split('\n');
-    return lines.some(line => line.trim().startsWith('##') && !line.includes('Codebase Patterns'));
+    // Check for timestamped entries like [2026-04-19T22:24:38.203Z]
+    return content.includes('[20');
   }
 
   /**

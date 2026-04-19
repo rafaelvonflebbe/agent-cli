@@ -3,6 +3,19 @@
  */
 
 /**
+ * Declarative conditions for when the agent loop should stop.
+ * Conditions use OR logic — any condition being met triggers a stop.
+ */
+export interface StopWhenCondition {
+  /** Stop when these specific story IDs are completed */
+  stories?: string[];
+  /** Stop when accumulated cost exceeds this threshold in USD (ACP only) */
+  maxCostUsd?: number;
+  /** Stop when total session time exceeds this limit in minutes */
+  maxDurationMinutes?: number;
+}
+
+/**
  * A single user story in the PRD
  */
 export interface UserStory {
@@ -44,6 +57,8 @@ export interface PRD {
   projectDirectory?: string;
   /** MCP servers to attach to ACP sessions for this project */
   mcpServers?: McpServerConfig[];
+  /** Custom conditions for when the agent loop should stop (OR logic) */
+  stopWhen?: StopWhenCondition;
 }
 
 /**
@@ -81,6 +96,8 @@ export interface ToolResult {
   totalCostUsd?: number;
   /** Duration in milliseconds (claude stream-json only) */
   durationMs?: number;
+  /** Token usage breakdown from stream-json result event */
+  tokenUsage?: TokenUsage;
 }
 
 /**
@@ -116,6 +133,8 @@ export interface AgentConfig {
   acp?: boolean;
   /** Specific story IDs to run (comma-separated). Skips priority ordering. */
   storyIds?: string[];
+  /** Extra prompt instructions appended each iteration (from --prompt flags) */
+  extraPrompts?: string[];
 }
 
 /**
@@ -145,7 +164,28 @@ export interface ArchiveCheckResult {
 }
 
 /**
- * Session state persisted between interrupted runs
+ * Token usage breakdown from a single iteration.
+ */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+}
+
+/**
+ * Cumulative token usage tracked across iterations.
+ */
+export interface TokenSession {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheCreationTokens: number;
+  totalCacheReadTokens: number;
+}
+
+/**
+ * Session state persisted between interrupted runs.
+ * Managed by the session reducer — all transitions via dispatch.
  */
 export interface SessionState {
   /** Current iteration number when session was saved */
@@ -164,6 +204,20 @@ export interface SessionState {
   acpSessionId?: string;
   /** Whether this session was resumed from a previous interrupted run */
   isResumed?: boolean;
+  /** Number of stories completed in this run */
+  storiesCompletedThisRun?: number;
+  /** Total cost in USD accumulated across ACP iterations */
+  totalCostUsd?: number;
+  /** Total duration in ms accumulated across ACP iterations */
+  totalDurationMs?: number;
+  /** Cumulative token usage across iterations */
+  tokens?: TokenSession;
+  /** Session start time as epoch ms */
+  sessionStartTime?: number;
+  /** Whether stopWhen was triggered this session */
+  stopWhenTriggered?: boolean;
+  /** Reason stopWhen was triggered */
+  stopWhenReason?: string;
 }
 
 /**

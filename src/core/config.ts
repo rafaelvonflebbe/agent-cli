@@ -91,6 +91,7 @@ export function createConfig(options: Partial<AgentConfig> = {}): AgentConfig {
     permissionMode: options.permissionMode ?? DEFAULTS.permissionMode,
     acp: options.acp,
     storyIds: options.storyIds,
+    extraPrompts: options.extraPrompts,
   };
 }
 

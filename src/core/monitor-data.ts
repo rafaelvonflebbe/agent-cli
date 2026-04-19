@@ -8,7 +8,7 @@ import { createSessionManager } from './session.js';
 import { fileExists } from '../utils/file-utils.js';
 import { join } from 'path';
 import { readFileSync, writeFileSync } from 'fs';
-import type { ProjectStatus, UserStory } from './types.js';
+import type { ProjectStatus, UserStory, SessionState } from './types.js';
 
 export const POLL_INTERVAL_MS = 2000;
 const STALE_THRESHOLD_MS = 30_000;
@@ -67,7 +67,7 @@ export async function collectProjectStatus(directory: string): Promise<ProjectSt
     const sessionExists = await sessionManager.exists();
 
     if (sessionExists) {
-      const session = await sessionManager.load();
+      const session: SessionState = await sessionManager.load();
       const iterStr = `${session.currentIteration}`;
       const sessionAge = Date.now() - new Date(session.timestamp).getTime();
       const isResumed = session.isResumed === true || !!session.acpSessionId;
@@ -77,7 +77,7 @@ export async function collectProjectStatus(directory: string): Promise<ProjectSt
       } else {
         status = sessionAge < STALE_THRESHOLD_MS ? 'running' : 'idle';
       }
-      cost = 0;
+      cost = session.totalCostUsd ?? 0;
       lastActivity = relativeTime(session.timestamp);
 
       return { directory, project, branch, iteration: iterStr, stories, status, cost, lastActivity, isResumed };
