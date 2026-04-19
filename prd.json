@@ -1,6 +1,6 @@
 {
   "project": "agent-cli",
-  "branchName": "feat/session",
+  "branchName": "feat/web-version",
   "description": "A test project for agent-cli",
   "userStories": [
     {

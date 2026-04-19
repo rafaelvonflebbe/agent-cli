@@ -57,7 +57,7 @@ export class Archiver {
   async archive(branchName: string): Promise<ArchiveInfo> {
     const date = new Date();
     const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD
-    const featureName = branchName.replace(/^ralph\//, ''); // Strip feature branch prefix
+    const featureName = branchName.replace(/\//g, '-'); // Sanitize slashes for flat filenames
     const archiveDir = join(this.archiveBasePath, `${dateStr}-${featureName}`);
 
     info(`Archiving previous run to: ${archiveDir}`);
