@@ -55,8 +55,8 @@
           },
           "priority": {
             "type": "number",
-            "description": "Priority (lower = higher priority)",
-            "minimum": 1
+            "description": "Priority (lower = higher priority, 0-based)",
+            "minimum": 0
           },
           "passes": {
             "type": "boolean",
@@ -140,6 +140,11 @@
           "exclusiveMinimum": 0
         }
       }
+    },
+    "conventions": {
+      "type": "object",
+      "description": "Project conventions and preferences passed to the agent via prompt context.",
+      "additionalProperties": true
     }
   }
 }
