@@ -15,6 +15,7 @@ import { join, resolve } from 'path';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { createPRDManager } from './core/prd.js';
+import { resolveDataDirectory } from './core/data-directory.js';
 import { addDirectory, removeDirectory, listDirectories } from './core/watch-config.js';
 import { createMonitor } from './core/monitor.js';
 import chalk from 'chalk';
@@ -79,11 +80,12 @@ program
         process.exit(1);
       }
 
-      // Check if prd.json exists
-      const prdPath = join(options.directory, 'prd.json');
+      // Check if prd.json exists (in .tmp/ or root for backward compat)
+      const dataDir = resolveDataDirectory(options.directory);
+      const prdPath = join(dataDir, 'prd.json');
       if (!fileExistsSync(prdPath)) {
-        error(`prd.json not found in: ${options.directory}`);
-        error('Please create a prd.json file before running agent-cli');
+        error(`prd.json not found in: ${options.directory} (checked .tmp/ and root)`);
+        error('Run `agent-cli --init --directory <path>` to create one');
         process.exit(1);
       }
 
@@ -136,6 +138,7 @@ program
       const config = createConfig({
         tool: options.tool,
         directory: options.directory,
+        dataDirectory: dataDir,
         projectDirectory: options.projectDirectory,
         maxIterations,
         dryRun: options.dryRun,
@@ -149,7 +152,7 @@ program
       });
 
       // Check for existing session
-      const sessionManager = createSessionManager(options.directory);
+      const sessionManager = createSessionManager(dataDir);
       const sessionExists = await sessionManager.exists();
 
       if (sessionExists && !options.resume) {
@@ -180,13 +183,14 @@ statusCommand
   .action(async (options: { dir: string }) => {
     try {
       const directory = options.dir;
-      const prdPath = join(directory, 'prd.json');
+      const dataDir = resolveDataDirectory(directory);
+      const prdPath = join(dataDir, 'prd.json');
       if (!fileExistsSync(prdPath)) {
-        error(`prd.json not found in: ${directory}`);
+        error(`prd.json not found in: ${directory} (checked .tmp/ and root)`);
         process.exit(1);
       }
 
-      const manager = createPRDManager(directory);
+      const manager = createPRDManager(dataDir);
       await manager.load();
       const status = manager.getStatus();
 

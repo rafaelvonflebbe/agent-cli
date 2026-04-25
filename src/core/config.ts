@@ -80,6 +80,7 @@ export function createConfig(options: Partial<AgentConfig> = {}): AgentConfig {
   return {
     tool: options.tool ?? DEFAULTS.tool,
     directory: options.directory ?? process.cwd(),
+    dataDirectory: options.dataDirectory,
     projectDirectory: options.projectDirectory,
     maxIterations: options.maxIterations ?? DEFAULTS.maxIterations,
     iterationDelay: options.iterationDelay ?? DEFAULTS.iterationDelay,

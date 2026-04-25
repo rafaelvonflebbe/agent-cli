@@ -40,26 +40,28 @@ const TEMPLATE_PRD = {
 export async function runInit(targetDir: string, projectDirectory?: string): Promise<void> {
   info(`Initializing agent-cli in: ${targetDir}`);
 
-  await ensureDir(targetDir);
+  // Data directory: use .tmp/ subdirectory for operational files
+  const dataDir = join(targetDir, '.tmp');
+  await ensureDir(dataDir);
 
   // Ensure the global ~/.agent-cli/agent-cli.md template exists (auto-created if missing)
   const globalAgentCliMd = await ensureGlobalAgentCliMd();
 
-  // Copy agent-cli.md from global template to project directory
-  const destAgentCliMd = join(targetDir, 'agent-cli.md');
+  // Copy agent-cli.md from global template to data directory
+  const destAgentCliMd = join(dataDir, 'agent-cli.md');
   await copyFileTo(globalAgentCliMd, destAgentCliMd);
-  success('  Created agent-cli.md');
+  success('  Created .tmp/agent-cli.md');
 
   // Create progress.log with standard header
-  const destProgress = join(targetDir, 'progress.log');
+  const destProgress = join(dataDir, 'progress.log');
   const header = `# Agent CLI Progress Log\nStarted: ${new Date().toISOString()}\n---\n`;
   await writeText(destProgress, header);
-  success('  Created progress.log');
+  success('  Created .tmp/progress.log');
 
   // Handle prd.json — skip if it already exists
-  const destPrd = join(targetDir, 'prd.json');
+  const destPrd = join(dataDir, 'prd.json');
   if (await fileExists(destPrd)) {
-    warn('  prd.json already exists — skipping (will not overwrite)');
+    warn('  .tmp/prd.json already exists — skipping (will not overwrite)');
   } else {
     const prd = { ...TEMPLATE_PRD };
 
@@ -77,7 +79,7 @@ export async function runInit(targetDir: string, projectDirectory?: string): Pro
       (prd as Record<string, unknown>).projectDirectory = resolve(projectDirectory);
     }
     await writeText(destPrd, JSON.stringify(prd, null, 2));
-    success(`  Created template prd.json (branch: ${prd.branchName})`);
+    success(`  Created .tmp/prd.json (branch: ${prd.branchName})`);
   }
 
   success('Init complete!');

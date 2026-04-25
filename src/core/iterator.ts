@@ -46,19 +46,20 @@ export class AgentIterator {
   constructor(config: AgentConfig) {
     validateConfig(config);
     this.config = config;
-    this.prdManager = createPRDManager(config.directory);
-    this.archiver = createArchiver(config.directory);
+    const dataDir = config.dataDirectory || config.directory;
+    this.prdManager = createPRDManager(dataDir);
+    this.archiver = createArchiver(dataDir);
     this.useACP = config.acp === true || isACPProvider(config.tool);
 
     if (this.useACP) {
       // Placeholder tool runner — won't be used for ACP path
       this.toolRunner = createToolRunner(
-        config.directory, config.tool, config.completionSignal,
+        dataDir, config.tool, config.completionSignal,
         config.sandbox, config.permissionMode, config.projectDirectory,
       );
     } else {
       this.toolRunner = createToolRunner(
-        config.directory,
+        dataDir,
         config.tool,
         config.completionSignal,
         config.sandbox,
@@ -66,7 +67,7 @@ export class AgentIterator {
         config.projectDirectory,
       );
     }
-    this.progressFilePath = join(config.directory, 'progress.log');
+    this.progressFilePath = join(dataDir, 'progress.log');
   }
 
   /**
@@ -145,10 +146,10 @@ export class AgentIterator {
 
     // Handle session: create new or resume existing via SessionStore
     if (this.config.resume) {
-      const resumed = await resumeSessionStore(this.config.directory);
+      const resumed = await resumeSessionStore(this.config.dataDirectory || this.config.directory);
       if (!resumed) {
         warn('No previous session found. Starting fresh.');
-        this.store = await createSessionStore(this.config.directory, this.config.tool, effectiveBranch);
+        this.store = await createSessionStore(this.config.dataDirectory || this.config.directory, this.config.tool, effectiveBranch);
       } else {
         this.store = resumed;
         const state = this.store.getState();
@@ -168,7 +169,7 @@ export class AgentIterator {
         }
       }
     } else {
-      this.store = await createSessionStore(this.config.directory, this.config.tool, effectiveBranch);
+      this.store = await createSessionStore(this.config.dataDirectory || this.config.directory, this.config.tool, effectiveBranch);
     }
 
     // Register SIGINT handler for graceful shutdown
@@ -528,7 +529,7 @@ export class AgentIterator {
     }
 
     // Read the prompt file (project-level or global fallback)
-    const promptFile = await resolvePromptFile(this.config.directory);
+    const promptFile = await resolvePromptFile(this.config.dataDirectory || this.config.directory);
     let promptContent = await readText(promptFile);
 
     // Append target directive when --story is set
@@ -623,11 +624,12 @@ export class AgentIterator {
     const projectDir = this.config.projectDirectory || this.config.directory;
 
     // Build additionalDirectories for filesystem scope:
-    // Include the config directory (where prd.json lives) when it differs from
+    // Include the data directory (where prd.json lives) when it differs from
     // the project directory so agents can read/write both locations.
+    const dataDir = this.config.dataDirectory || this.config.directory;
     const additionalDirectories: string[] = [];
-    if (this.config.projectDirectory && this.config.projectDirectory !== this.config.directory) {
-      additionalDirectories.push(this.config.directory);
+    if (this.config.projectDirectory && this.config.projectDirectory !== dataDir) {
+      additionalDirectories.push(dataDir);
     }
 
     // Resolve MCP servers from provider defaults, PRD, and project config
@@ -638,7 +640,7 @@ export class AgentIterator {
     });
 
     // Set up log file for real-time output
-    const logPath = join(this.config.directory, '.agent-output.log');
+    const logPath = join(this.config.dataDirectory || this.config.directory, '.agent-output.log');
     const isResumed = this.store?.getState().isResumed ?? false;
     this.acpLogStream = createWriteStream(logPath, { flags: isResumed ? 'a' : 'w' });
 

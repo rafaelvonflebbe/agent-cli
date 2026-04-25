@@ -5,6 +5,7 @@
 import { loadWatchConfig } from './watch-config.js';
 import { createPRDManager } from './prd.js';
 import { createSessionManager } from './session.js';
+import { resolveDataDirectory } from './data-directory.js';
 import { fileExists } from '../utils/file-utils.js';
 import { join } from 'path';
 import { readFileSync, writeFileSync } from 'fs';
@@ -43,7 +44,8 @@ export function formatCost(cost: number): string {
  * Collect status for a single watched directory
  */
 export async function collectProjectStatus(directory: string): Promise<ProjectStatus | null> {
-  const prdPath = join(directory, 'prd.json');
+  const dataDir = resolveDataDirectory(directory);
+  const prdPath = join(dataDir, 'prd.json');
   if (!(await fileExists(prdPath))) return null;
 
   let project = 'unknown';
@@ -54,7 +56,7 @@ export async function collectProjectStatus(directory: string): Promise<ProjectSt
   let lastActivity = '-';
 
   try {
-    const manager = createPRDManager(directory);
+    const manager = createPRDManager(dataDir);
     const prd = await manager.load();
     project = prd.project;
     branch = prd.branchName || '-';
@@ -63,7 +65,7 @@ export async function collectProjectStatus(directory: string): Promise<ProjectSt
     const total = prd.userStories.length;
     stories = `${completed}/${total}`;
 
-    const sessionManager = createSessionManager(directory);
+    const sessionManager = createSessionManager(dataDir);
     const sessionExists = await sessionManager.exists();
 
     if (sessionExists) {
@@ -97,7 +99,8 @@ export async function collectProjectStatus(directory: string): Promise<ProjectSt
  */
 export async function loadStoriesForProject(directory: string): Promise<UserStory[]> {
   try {
-    const manager = createPRDManager(directory);
+    const dataDir = resolveDataDirectory(directory);
+    const manager = createPRDManager(dataDir);
     const prd = await manager.load();
     return prd.userStories;
   } catch {
@@ -121,7 +124,8 @@ export async function pollAllProjects(): Promise<ProjectStatus[]> {
  */
 export function readAgentLog(directory: string, lines: number = LOG_TAIL_LINES): string[] {
   try {
-    const logPath = join(directory, AGENT_OUTPUT_LOG);
+    const dataDir = resolveDataDirectory(directory);
+    const logPath = join(dataDir, AGENT_OUTPUT_LOG);
     const content = readFileSync(logPath, 'utf-8');
     const allLines = content.split('\n').filter(l => l.length > 0);
     return allLines.slice(-lines);
@@ -136,7 +140,8 @@ export function readAgentLog(directory: string, lines: number = LOG_TAIL_LINES):
  * iteration markers, and cost/duration summaries.
  */
 export function writeTestLogData(directory: string): void {
-  const logPath = join(directory, AGENT_OUTPUT_LOG);
+  const dataDir = resolveDataDirectory(directory);
+  const logPath = join(dataDir, AGENT_OUTPUT_LOG);
   const now = new Date().toISOString();
 
   const lines = [

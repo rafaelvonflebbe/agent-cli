@@ -5,6 +5,7 @@
 
 import { execSync, spawnSync } from 'child_process';
 import { join } from 'path';
+import { resolveDataDirectory } from './data-directory.js';
 
 const AGENT_OUTPUT_LOG = '.agent-output.log';
 
@@ -85,7 +86,8 @@ export function ensureTmuxSession(): boolean {
 export function openLogPane(directory: string, projectName: string): string | null {
   if (!isInsideTmux()) return null;
 
-  const logPath = join(directory, AGENT_OUTPUT_LOG);
+  const dataDir = resolveDataDirectory(directory);
+  const logPath = join(dataDir, AGENT_OUTPUT_LOG);
 
   // If a pane is already open for this directory, focus it
   const existingPaneId = openPanes.get(directory);

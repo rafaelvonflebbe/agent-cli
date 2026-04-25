@@ -86,13 +86,19 @@ export async function ensureGlobalAgentCliMd(): Promise<string> {
  * @throws Error if no prompt file can be resolved
  */
 export async function resolvePromptFile(workDir: string): Promise<string> {
-  // 1. Check project-level first
+  // 1. Check .tmp/ subdirectory first (new layout)
+  const tmpPrompt = join(workDir, '.tmp', 'agent-cli.md');
+  if (await fileExists(tmpPrompt)) {
+    return tmpPrompt;
+  }
+
+  // 2. Check project root (backward compat)
   const projectPrompt = join(workDir, 'agent-cli.md');
   if (await fileExists(projectPrompt)) {
     return projectPrompt;
   }
 
-  // 2. Fall back to global (auto-created from bundled template if missing)
+  // 3. Fall back to global (auto-created from bundled template if missing)
   const globalPath = await ensureGlobalAgentCliMd();
   return globalPath;
 }

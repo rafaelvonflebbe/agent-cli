@@ -106,8 +106,13 @@ export interface ToolResult {
 export interface AgentConfig {
   /** AI tool to use */
   tool: ToolType;
-  /** Working directory containing prd.json */
+  /** Working directory (user-specified, the project root) */
   directory: string;
+  /**
+   * Data directory where operational files live (prd.json, progress.log, etc.).
+   * Computed from `directory` — either `.tmp/` subdirectory or same as `directory`.
+   */
+  dataDirectory?: string;
   /**
    * Project directory where the AI tool works (cwd for the spawned process).
    * If omitted, defaults to `directory`.
