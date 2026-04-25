@@ -37,11 +37,11 @@ const TEMPLATE_PRD = {
 /**
  * Run the init process — copy scaffold files to the target directory
  */
-export async function runInit(targetDir: string, projectDirectory?: string): Promise<void> {
+export async function runInit(targetDir: string, projectDirectory?: string, noTmp?: boolean): Promise<void> {
   info(`Initializing agent-cli in: ${targetDir}`);
 
-  // Data directory: use .tmp/ subdirectory for operational files
-  const dataDir = join(targetDir, '.tmp');
+  // Data directory: use .tmp/ subdirectory for operational files (unless --no-tmp)
+  const dataDir = noTmp ? targetDir : join(targetDir, '.tmp');
   await ensureDir(dataDir);
 
   // Ensure the global ~/.agent-cli/agent-cli.md template exists (auto-created if missing)
@@ -50,18 +50,19 @@ export async function runInit(targetDir: string, projectDirectory?: string): Pro
   // Copy agent-cli.md from global template to data directory
   const destAgentCliMd = join(dataDir, 'agent-cli.md');
   await copyFileTo(globalAgentCliMd, destAgentCliMd);
-  success('  Created .tmp/agent-cli.md');
+  const prefix = noTmp ? '' : '.tmp/';
+  success(`  Created ${prefix}agent-cli.md`);
 
   // Create progress.log with standard header
   const destProgress = join(dataDir, 'progress.log');
   const header = `# Agent CLI Progress Log\nStarted: ${new Date().toISOString()}\n---\n`;
   await writeText(destProgress, header);
-  success('  Created .tmp/progress.log');
+  success(`  Created ${prefix}progress.log`);
 
   // Handle prd.json — skip if it already exists
   const destPrd = join(dataDir, 'prd.json');
   if (await fileExists(destPrd)) {
-    warn('  .tmp/prd.json already exists — skipping (will not overwrite)');
+    warn(`  ${prefix}prd.json already exists — skipping (will not overwrite)`);
   } else {
     const prd = { ...TEMPLATE_PRD };
 
@@ -79,7 +80,7 @@ export async function runInit(targetDir: string, projectDirectory?: string): Pro
       (prd as Record<string, unknown>).projectDirectory = resolve(projectDirectory);
     }
     await writeText(destPrd, JSON.stringify(prd, null, 2));
-    success(`  Created .tmp/prd.json (branch: ${prd.branchName})`);
+    success(`  Created ${prefix}prd.json (branch: ${prd.branchName})`);
   }
 
   success('Init complete!');

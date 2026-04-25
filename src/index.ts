@@ -45,6 +45,7 @@ program
   .option('--directory <path>', 'Working directory containing prd.json', process.cwd())
   .option('--dry-run', 'Simulate iterations without spawning tools')
   .option('--init', 'Bootstrap agent-cli files in the target directory and exit')
+  .option('--no-tmp', 'With --init: create files in project root instead of .tmp/')
   .option('--project-directory <path>', 'Project directory where the AI tool works (cwd for spawned process). Defaults to --directory')
   .option('--stories <number>', 'Maximum number of stories to complete per run')
   .option('--resume', 'Resume from a previous interrupted session')
@@ -53,11 +54,11 @@ program
   .option('--acp', 'Force ACP (Agent Client Protocol) mode instead of legacy spawn')
   .option('--story <ids>', 'Run specific story IDs (comma-separated, e.g., US-068,US-070)')
   .option('--prompt <text-or-path>', 'Extra instructions appended to each iteration prompt (can be repeated). If value ends with .md and file exists, reads file content', (value: string, previous: string[]) => previous.concat([value]), [] as string[])
-  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; projectDirectory?: string; stories?: string; resume?: boolean; sandbox?: boolean; permissionMode: string; acp?: boolean; story?: string; prompt?: string[] }) => {
+  .action(async (maxIterationsStr: string, options: { tool: ToolType; directory: string; dryRun: boolean; init: boolean; noTmp: boolean; projectDirectory?: string; stories?: string; resume?: boolean; sandbox?: boolean; permissionMode: string; acp?: boolean; story?: string; prompt?: string[] }) => {
     try {
       // Handle --init mode
       if (options.init) {
-        await runInit(options.directory, options.projectDirectory);
+        await runInit(options.directory, options.projectDirectory, options.noTmp);
         process.exit(0);
       }
 
